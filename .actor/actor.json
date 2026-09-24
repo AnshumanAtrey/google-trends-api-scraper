@@ -3,7 +3,7 @@
     "name": "google-trends-api-scraper",
     "title": "Google Trends Scraper API - Interest Over Time, Related Queries",
     "description": "Google Trends API and scraper with no Google account or API key: search interest over time, compare up to 5 keywords, interest by region, and top and rising related queries. Trending Now lists every trending search with news. A pytrends alternative for Python, n8n and AI agents. No start fee.",
-    "version": "0.1",
+    "version": "1.0",
     "buildTag": "latest",
     "categories": [
         "SEO_TOOLS",
@@ -11,6 +11,7 @@
         "NEWS"
     ],
     "input": "./INPUT_SCHEMA.json",
+    "output": "./output_schema.json",
     "dockerfile": "../Dockerfile",
     "readme": "../README.md",
     "minMemoryMbytes": 128,
@@ -18,91 +19,773 @@
     "storages": {
         "dataset": {
             "actorSpecification": 1,
-            "title": "Requests",
-            "description": "One row per HTTP request, in the order sent. The run summary is the OUTPUT record of the key-value store.",
+            "title": "Google Trends rows",
+            "description": "One row per keyword (keywords and compare modes), per Trending Now search (trending mode) or per keyword looked up (suggestions mode). The run summary is the OUTPUT record of the key-value store.",
+            "fields": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Search term (keyword)",
+                        "description": "The keyword or topic id you typed, exactly as sent to Google.",
+                        "example": "bitcoin"
+                    },
+                    "keywordType": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Term or topic (keywordType)",
+                        "description": "Search term for plain words, or Topic when the keyword is a topic id such as /m/05p0rrx.",
+                        "example": "Search term"
+                    },
+                    "comparedWith": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "title": "Compared with (comparedWith)",
+                        "description": "In compare mode, the other keywords in the same comparison. Empty in keywords mode.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "example": [
+                            "ethereum",
+                            "solana"
+                        ]
+                    },
+                    "geo": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Country code (geo)",
+                        "description": "Two-letter country code the data is for. Empty means worldwide.",
+                        "example": "US"
+                    },
+                    "geoName": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Place (geoName)",
+                        "description": "Name of the country, or Worldwide.",
+                        "example": "Worldwide"
+                    },
+                    "timeRange": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Time period (timeRange)",
+                        "description": "The time period Google was asked for, as a Google Trends code or two dates.",
+                        "example": "today 12-m"
+                    },
+                    "startDate": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "From (startDate)",
+                        "description": "First day of the time period, in UTC (YYYY-MM-DD).",
+                        "example": "2025-09-24"
+                    },
+                    "endDate": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "To (endDate)",
+                        "description": "Last day of the time period, in UTC (YYYY-MM-DD).",
+                        "example": "2026-09-24"
+                    },
+                    "step": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Point spacing (step)",
+                        "description": "How far apart the points of the timeline are: minute, hour, day, week or month. Google picks it from the time period.",
+                        "example": "week"
+                    },
+                    "category": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "title": "Subject area (category)",
+                        "description": "Google Trends category id the searches were limited to. 0 means all subjects.",
+                        "example": 0
+                    },
+                    "property": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Search type (property)",
+                        "description": "Which Google search was measured: web, news, images, youtube or froogle (Google Shopping).",
+                        "example": "web"
+                    },
+                    "interestOverTime": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "title": "Timeline (interestOverTime)",
+                        "description": "Google's interest over time on a 0 to 100 scale, where 100 is the busiest point in this request. Empty when not asked for or when Google had no data.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "date": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Period start (date)",
+                                    "description": "Start of the period in UTC: a date, or a date and time for hourly and minute steps.",
+                                    "example": "2026-02-01"
+                                },
+                                "value": {
+                                    "type": "integer",
+                                    "title": "Interest 0-100 (value)",
+                                    "description": "Relative search interest for the period, 0 to 100.",
+                                    "example": 100
+                                },
+                                "isPartial": {
+                                    "type": "boolean",
+                                    "title": "Still counting? (isPartial)",
+                                    "description": "True for the current period, which is not over yet and can still change.",
+                                    "example": false
+                                }
+                            }
+                        },
+                        "example": [
+                            {
+                                "date": "2026-02-01",
+                                "value": 100,
+                                "isPartial": false
+                            }
+                        ]
+                    },
+                    "averageInterest": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "title": "Average 0-100 (averageInterest)",
+                        "description": "Google's average interest for this keyword in a comparison. Null in keywords mode, where Google sends none.",
+                        "example": 8
+                    },
+                    "regionLevel": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Region detail (regionLevel)",
+                        "description": "How finely the regions are split: country, region (state or province) or city.",
+                        "example": "country"
+                    },
+                    "interestByRegion": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "title": "Regions (interestByRegion)",
+                        "description": "Where the keyword is searched most, 0 to 100 per region. In compare mode each value is this keyword's share of the compared searches there, in percent. Regions without data are left out.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "regionCode": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Region code (regionCode)",
+                                    "description": "Country code, or country and state code such as US-CA. Null for cities, which Google sends without a code.",
+                                    "example": "CH"
+                                },
+                                "regionName": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Region (regionName)",
+                                    "description": "Name of the country, state, province or city.",
+                                    "example": "Switzerland"
+                                },
+                                "value": {
+                                    "type": "integer",
+                                    "title": "Interest 0-100 (value)",
+                                    "description": "Relative search interest in this region, 0 to 100.",
+                                    "example": 100
+                                }
+                            }
+                        },
+                        "example": [
+                            {
+                                "regionCode": "CH",
+                                "regionName": "Switzerland",
+                                "value": 100
+                            }
+                        ]
+                    },
+                    "relatedQueries": {
+                        "type": [
+                            "object",
+                            "null"
+                        ],
+                        "title": "Also searched (relatedQueries)",
+                        "description": "Google's related queries for the keyword: up to 25 top and 25 rising, with Google's growth label for rising ones.",
+                        "properties": {
+                            "top": {
+                                "type": "array",
+                                "title": "Most searched (top)",
+                                "description": "Related searches with the most interest, scored 0 to 100.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "title": "Related search (query)",
+                                            "description": "The related search as people typed it.",
+                                            "example": "bitcoin price"
+                                        },
+                                        "value": {
+                                            "type": "integer",
+                                            "title": "Score (value)",
+                                            "description": "Google's number: 0 to 100 for top queries, growth in percent for rising ones.",
+                                            "example": 100
+                                        }
+                                    }
+                                }
+                            },
+                            "rising": {
+                                "type": "array",
+                                "title": "Fastest rising (rising)",
+                                "description": "Related searches that grew the most compared with the period before.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "query": {
+                                            "type": "string",
+                                            "title": "Related search (query)",
+                                            "description": "The related search as people typed it.",
+                                            "example": "clarity act"
+                                        },
+                                        "value": {
+                                            "type": "integer",
+                                            "title": "Score (value)",
+                                            "description": "Growth in percent as Google reports it.",
+                                            "example": 2650
+                                        },
+                                        "growth": {
+                                            "type": [
+                                                "string",
+                                                "null"
+                                            ],
+                                            "title": "Rise % or Breakout (growth)",
+                                            "description": "Google's growth label: a percentage such as +2,650%, or Breakout for the fastest risers.",
+                                            "example": "+2,650%"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "example": {
+                            "top": [
+                                {
+                                    "query": "bitcoin price",
+                                    "value": 100
+                                }
+                            ],
+                            "rising": [
+                                {
+                                    "query": "clarity act",
+                                    "value": 2650,
+                                    "growth": "+2,650%"
+                                }
+                            ]
+                        }
+                    },
+                    "missing": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "title": "Empty parts (missing)",
+                        "description": "Parts you asked for that Google sent empty, such as relatedQueries for a rare word, so an empty list never looks like Google's answer.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "example": []
+                    },
+                    "trendsUrl": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Google Trends link (trendsUrl)",
+                        "description": "The same view on trends.google.com, to check the numbers by hand.",
+                        "example": "https://trends.google.com/trends/explore?q=bitcoin&date=today%2012-m"
+                    },
+                    "term": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Trending search (term)",
+                        "description": "The search that is trending, in trending mode.",
+                        "example": "meta vr glasses"
+                    },
+                    "trendingHours": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "title": "Trending period (trendingHours)",
+                        "description": "The Trending Now window in hours: 4, 24, 48 or 168. Null for rows from the RSS fallback, whose window Google sets.",
+                        "example": 24
+                    },
+                    "isActive": {
+                        "type": [
+                            "boolean",
+                            "null"
+                        ],
+                        "title": "Still trending? (isActive)",
+                        "description": "True while Google still lists the trend as active.",
+                        "example": true
+                    },
+                    "startedAt": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Started (startedAt)",
+                        "description": "When the trend started, in UTC.",
+                        "example": "2026-09-23T23:50:00+00:00"
+                    },
+                    "endedAt": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "title": "Ended (endedAt)",
+                        "description": "When the trend ended, in UTC. Null while it is still active.",
+                        "example": null
+                    },
+                    "searchVolume": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "title": "Approx. searches (searchVolume)",
+                        "description": "Google's rough search count bucket, the lower bound of what trends.google.com shows, such as 50000 for 50K+.",
+                        "example": 50000
+                    },
+                    "increasePercent": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "title": "Growth % (increasePercent)",
+                        "description": "How much searches for the trend grew, in percent, as Google reports it.",
+                        "example": 1000
+                    },
+                    "categories": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "title": "Trend topics (categories)",
+                        "description": "Google's Trending Now topics for the trend, such as Technology or Sports.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "example": [
+                            "Technology"
+                        ]
+                    },
+                    "relatedSearches": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "title": "Also trending (relatedSearches)",
+                        "description": "The searches Google groups under this trend.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "example": [
+                            "meta glasses",
+                            "meta connect 2026"
+                        ]
+                    },
+                    "news": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "title": "News stories (news)",
+                        "description": "News articles about the trend, up to the number you asked for.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Headline (title)",
+                                    "description": "Headline of the article.",
+                                    "example": "Meta Launches Lightweight $1,299 VR Headset That Looks Like Glasses"
+                                },
+                                "url": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Link (url)",
+                                    "description": "Address of the article.",
+                                    "example": "https://www.cnn.com/2026/09/24/tech/meta-muse-ai-glasses-connect"
+                                },
+                                "source": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Publisher (source)",
+                                    "description": "Name of the news site.",
+                                    "example": "CNN"
+                                },
+                                "publishedAt": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Published (publishedAt)",
+                                    "description": "When the article was published, in UTC. Null in the RSS fallback, which has no article dates.",
+                                    "example": "2026-09-24T04:01:29+00:00"
+                                },
+                                "imageUrl": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Image (imageUrl)",
+                                    "description": "Thumbnail image Google shows with the article.",
+                                    "example": "https://encrypted-tbn1.gstatic.com/images?q=tbn:ANd9GcTE6QfFP4TO"
+                                }
+                            }
+                        },
+                        "example": [
+                            {
+                                "title": "Meta is betting big on its Muse AI agent with a blitz of new gadgets",
+                                "url": "https://www.cnn.com/2026/09/24/tech/meta-muse-ai-glasses-connect",
+                                "source": "CNN",
+                                "publishedAt": "2026-09-24T04:01:29+00:00"
+                            }
+                        ]
+                    },
+                    "suggestions": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "title": "Matching topics (suggestions)",
+                        "description": "In suggestions mode, the topics Google matches the keyword to. Put a topicId into Keywords to track the topic.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "topicId": {
+                                    "type": "string",
+                                    "title": "Topic id (topicId)",
+                                    "description": "Google's id for the topic, usable as a keyword.",
+                                    "example": "/m/05p0rrx"
+                                },
+                                "title": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Topic name (title)",
+                                    "description": "Name of the topic.",
+                                    "example": "Bitcoin"
+                                },
+                                "type": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ],
+                                    "title": "Topic kind (type)",
+                                    "description": "What Google says the topic is, such as Cryptocurrency or Topic.",
+                                    "example": "Cryptocurrency"
+                                }
+                            }
+                        },
+                        "example": [
+                            {
+                                "topicId": "/m/05p0rrx",
+                                "title": "Bitcoin",
+                                "type": "Cryptocurrency"
+                            }
+                        ]
+                    },
+                    "scrapedAt": {
+                        "type": "string",
+                        "title": "Fetched at (scrapedAt)",
+                        "description": "When the actor got this answer from Google, in UTC.",
+                        "example": "2026-09-24T06:32:58+00:00"
+                    }
+                }
+            },
             "views": {
                 "overview": {
-                    "title": "Requests",
+                    "title": "Keywords",
+                    "description": "One row per keyword with its timeline, regions and related queries.",
                     "transformation": {
                         "fields": [
-                            "seq",
-                            "elapsedSecs",
-                            "endpoint",
                             "keyword",
-                            "attempt",
-                            "status",
-                            "ok",
-                            "throttled",
-                            "count",
-                            "latencyMs",
-                            "bytes",
-                            "sessionNo",
-                            "exitIp",
-                            "error",
-                            "snippet"
+                            "comparedWith",
+                            "geoName",
+                            "timeRange",
+                            "step",
+                            "averageInterest",
+                            "interestOverTime",
+                            "interestByRegion",
+                            "relatedQueries",
+                            "missing",
+                            "trendsUrl"
                         ]
                     },
                     "display": {
                         "component": "table",
                         "properties": {
-                            "seq": {
-                                "label": "#",
-                                "format": "number"
-                            },
-                            "elapsedSecs": {
-                                "label": "At (s)",
-                                "format": "number"
-                            },
-                            "endpoint": {
-                                "label": "Endpoint",
-                                "format": "text"
-                            },
                             "keyword": {
-                                "label": "Keyword",
+                                "label": "Search term (keyword)",
                                 "format": "text"
                             },
-                            "attempt": {
-                                "label": "Attempt",
+                            "comparedWith": {
+                                "label": "Compared with (comparedWith)",
+                                "format": "array"
+                            },
+                            "geoName": {
+                                "label": "Place (geoName)",
+                                "format": "text"
+                            },
+                            "timeRange": {
+                                "label": "Time period (timeRange)",
+                                "format": "text"
+                            },
+                            "step": {
+                                "label": "Point spacing (step)",
+                                "format": "text"
+                            },
+                            "averageInterest": {
+                                "label": "Average 0-100 (averageInterest)",
                                 "format": "number"
                             },
-                            "status": {
-                                "label": "HTTP",
+                            "interestOverTime": {
+                                "label": "Timeline (interestOverTime)",
+                                "format": "array"
+                            },
+                            "interestByRegion": {
+                                "label": "Regions (interestByRegion)",
+                                "format": "array"
+                            },
+                            "relatedQueries": {
+                                "label": "Also searched (relatedQueries)",
+                                "format": "object"
+                            },
+                            "missing": {
+                                "label": "Empty parts (missing)",
+                                "format": "array"
+                            },
+                            "trendsUrl": {
+                                "label": "Google Trends link (trendsUrl)",
+                                "format": "link"
+                            }
+                        }
+                    }
+                },
+                "timeline": {
+                    "title": "Interest over time",
+                    "description": "One row per point of each keyword's timeline.",
+                    "transformation": {
+                        "unwind": [
+                            "interestOverTime"
+                        ],
+                        "fields": [
+                            "keyword",
+                            "geoName",
+                            "date",
+                            "value",
+                            "isPartial"
+                        ]
+                    },
+                    "display": {
+                        "component": "table",
+                        "properties": {
+                            "keyword": {
+                                "label": "Search term (keyword)",
+                                "format": "text"
+                            },
+                            "geoName": {
+                                "label": "Place (geoName)",
+                                "format": "text"
+                            },
+                            "date": {
+                                "label": "Period start (date)",
+                                "format": "text"
+                            },
+                            "value": {
+                                "label": "Interest 0-100 (value)",
                                 "format": "number"
                             },
-                            "ok": {
-                                "label": "OK",
+                            "isPartial": {
+                                "label": "Still counting? (isPartial)",
+                                "format": "boolean"
+                            }
+                        }
+                    }
+                },
+                "regions": {
+                    "title": "Interest by region",
+                    "description": "One row per region of each keyword.",
+                    "transformation": {
+                        "unwind": [
+                            "interestByRegion"
+                        ],
+                        "fields": [
+                            "keyword",
+                            "regionName",
+                            "regionCode",
+                            "value"
+                        ]
+                    },
+                    "display": {
+                        "component": "table",
+                        "properties": {
+                            "keyword": {
+                                "label": "Search term (keyword)",
+                                "format": "text"
+                            },
+                            "regionName": {
+                                "label": "Region (regionName)",
+                                "format": "text"
+                            },
+                            "regionCode": {
+                                "label": "Region code (regionCode)",
+                                "format": "text"
+                            },
+                            "value": {
+                                "label": "Interest 0-100 (value)",
+                                "format": "number"
+                            }
+                        }
+                    }
+                },
+                "trending": {
+                    "title": "Trending Now",
+                    "description": "One row per Trending Now search.",
+                    "transformation": {
+                        "fields": [
+                            "term",
+                            "searchVolume",
+                            "increasePercent",
+                            "isActive",
+                            "startedAt",
+                            "endedAt",
+                            "categories",
+                            "relatedSearches",
+                            "news",
+                            "geo",
+                            "trendingHours"
+                        ]
+                    },
+                    "display": {
+                        "component": "table",
+                        "properties": {
+                            "term": {
+                                "label": "Trending search (term)",
+                                "format": "text"
+                            },
+                            "searchVolume": {
+                                "label": "Approx. searches (searchVolume)",
+                                "format": "number"
+                            },
+                            "increasePercent": {
+                                "label": "Growth % (increasePercent)",
+                                "format": "number"
+                            },
+                            "isActive": {
+                                "label": "Still trending? (isActive)",
                                 "format": "boolean"
                             },
-                            "throttled": {
-                                "label": "Throttled",
-                                "format": "boolean"
+                            "startedAt": {
+                                "label": "Started (startedAt)",
+                                "format": "date"
                             },
-                            "count": {
-                                "label": "Points / items",
-                                "format": "number"
+                            "endedAt": {
+                                "label": "Ended (endedAt)",
+                                "format": "date"
                             },
-                            "latencyMs": {
-                                "label": "Latency (ms)",
-                                "format": "number"
+                            "categories": {
+                                "label": "Trend topics (categories)",
+                                "format": "array"
                             },
-                            "bytes": {
-                                "label": "Bytes",
-                                "format": "number"
+                            "relatedSearches": {
+                                "label": "Also trending (relatedSearches)",
+                                "format": "array"
                             },
-                            "sessionNo": {
-                                "label": "Session",
-                                "format": "number"
+                            "news": {
+                                "label": "News stories (news)",
+                                "format": "array"
                             },
-                            "exitIp": {
-                                "label": "Exit IP",
+                            "geo": {
+                                "label": "Country code (geo)",
                                 "format": "text"
                             },
-                            "error": {
-                                "label": "Error",
+                            "trendingHours": {
+                                "label": "Trending period (trendingHours)",
+                                "format": "number"
+                            }
+                        }
+                    }
+                },
+                "suggestions": {
+                    "title": "Topic suggestions",
+                    "description": "One row per topic Google matches a keyword to.",
+                    "transformation": {
+                        "unwind": [
+                            "suggestions"
+                        ],
+                        "fields": [
+                            "keyword",
+                            "title",
+                            "type",
+                            "topicId"
+                        ]
+                    },
+                    "display": {
+                        "component": "table",
+                        "properties": {
+                            "keyword": {
+                                "label": "Search term (keyword)",
                                 "format": "text"
                             },
-                            "snippet": {
-                                "label": "Body start",
+                            "title": {
+                                "label": "Topic name (title)",
+                                "format": "text"
+                            },
+                            "type": {
+                                "label": "Topic kind (type)",
+                                "format": "text"
+                            },
+                            "topicId": {
+                                "label": "Topic id (topicId)",
                                 "format": "text"
                             }
                         }

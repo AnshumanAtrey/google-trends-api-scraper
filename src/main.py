@@ -1,126 +1,75 @@
 """
-Google Trends Probe - measures how Google Trends answers from wherever this run's traffic exits.
+Google Trends Scraper API - Google Trends data as dataset rows, with no Google account or API key.
 
-Private, unpriced research actor. It replays the browser flow of trends.google.com/trends/explore
-(warmup for the NID cookie, /api/explore, /api/widgetdata/multiline, optionally relatedsearches
-and comparedgeo) for a list of keywords, one request at a time, with a fixed gap between Google
-requests, and records every request as one dataset row. The OUTPUT record summarises it:
-success rate, 429s and where the first one came, whether retries recovered, latency, points.
+Four reports, set by mode:
+- keywords: each keyword on its own 0-100 scale: interest over time, interest by region and
+  related queries (top and rising), whichever are asked for. One row per keyword.
+- compare: 2 to 5 keywords in one explore, so they share one scale. One row per keyword.
+- trending: every Trending Now search in a country (Google's full list, not the 10-item RSS),
+  with news articles. One row per trend. The RSS feed is the fallback if the list fails.
+- suggestions: the topics (and topic ids) Google matches each keyword to. One row per keyword.
 
-- One session = one cookie jar and one proxy session id (one exit IP). A new session every
-  N keywords, and optionally after a 429, re-warms cookies and, behind a proxy, changes IP.
-- Warmup is GET /trends/ (about 690 KB), the trending RSS (about 21 KB; it also sets NID, seen
-  from a residential IP 2026-09-24) or nothing. The RSS and autocomplete readings come after
-  the keywords, so warmup none really sends explore without a cookie.
-- A 429 (or a redirect to google.com/sorry) on explore or multiline retries the whole keyword
-  flow after a doubling backoff. Nothing else is retried: the probe measures, it does not hide.
-- Proxy URLs hold the proxy password; they are never logged, stored or echoed.
-- A status message that can never fail the run: SDK 3.x raises on the APIFY_AI run origin
-  after the message is already stored.
+How the run is organised (the request-level rules are in google.py):
+- Lane 0 talks to Google directly. With more than 8 keywords, up to 5 more lanes run in
+  parallel on Apify datacenter proxy sessions (each its own IP); if the proxy cannot be set up,
+  everything stays on lane 0. Each keyword runs start to finish on one lane. A proxy lane that
+  gets nothing but throttles or proxy errors for a keyword, even on fresh sessions, retires and
+  hands the keyword back, so a bad proxy pool costs time, never keywords.
+- No new keyword starts within 60 s of the run's time limit, so the summary always gets written.
+- Charging (pay per event): a keyword row is charged "keyword" only when it holds a timeline or
+  regions; "related-queries" once per keyword only when Google sent at least one related query;
+  one "trend" per Trending Now row; one "suggestions" per keyword with at least one topic. A row
+  with no data is not pushed and costs nothing; OUTPUT says why. Before a keyword is fetched its
+  worst-case cost is reserved against the spending limit, so parallel lanes never deliver data the
+  limit cannot pay for; a lane that finds the rest of the budget held by other lanes steps aside
+  rather than ending the run, and the limit counts as reached only when nothing is held. When a
+  charge says the limit is reached the run stops after that item.
+- No summary row in the dataset (CSV and Excel exports hold data rows only). The summary is the
+  OUTPUT record, refreshed at most every 10 s (each key-value write is billed) and final at the end.
+- A run that delivers nothing ends FAILED with a plain message; a partial one SUCCEEDED.
+- The status message can never fail the run: SDK 3.x raises on the APIFY_AI run origin after
+  the message is already stored.
 """
 import asyncio
-import hashlib
-import json
 import secrets
 import time
+from collections import Counter, deque
 from datetime import datetime, timezone
-from importlib.metadata import version
-from urllib.parse import quote
+from decimal import Decimal
 
 from apify import Actor
 
-from . import google as g
-from .net import USERINFO, Session
-from .stats import GOOGLE_ENDPOINTS, summarize
+from . import google, parse
+from .inputs import Config, InputError, geo_name, parse_input
 
-DEFAULTS = {
-    'client': 'curl_cffi',
-    'impersonate': 'chrome',
-    'proxyConfiguration': {'useApifyProxy': False},
-    'keywords': g.DEFAULT_KEYWORDS,
-    'geo': '',
-    'timeframe': 'today 12-m',
-    'includeRelated': False,
-    'warmup': 'home',
-    'delayMs': 1500,
-    'newSessionEvery': 10,
-    'retry429': 2,
-    'retryBackoffSecs': 10,
-    'rotateOn429': True,
-    'maxGoogleRequests': 300,
+# Pay-per-event names; they must equal the event keys of the pricing set in Console / store.json.
+KEYWORD_EVENT = 'keyword'
+RELATED_EVENT = 'related-queries'
+TREND_EVENT = 'trend'
+SUGGESTIONS_EVENT = 'suggestions'
+EVENTS = (KEYWORD_EVENT, RELATED_EVENT, TREND_EVENT, SUGGESTIONS_EVENT)
+
+KEYWORDS_PER_LANE = 8         # one more proxy lane for every 8 keywords after the first 8
+MAX_PROXY_LANES = 5
+RUN_SAFETY_MARGIN_S = 60      # stop starting keywords this close to the time limit (a quarter of short runs)
+OUTPUT_EVERY_S = 10
+STATUS_EVERY_S = 5
+TREND_BATCH = 200             # Trending Now rows per push, so a spending limit cuts cleanly
+
+PART_NAMES = {'interestOverTime': 'interest over time', 'interestByRegion': 'interest by region',
+              'relatedQueries': 'related queries'}
+STOP_REASONS = {
+    'limit': 'your spending limit for this run was reached. Raise the limit to get the rest.',
+    'time': 'the run was about to reach its time limit. Raise the run timeout to get the rest.',
 }
-CLIENTS = ('curl_cffi', 'httpx')
-WARMUPS = ('home', 'rss', 'none')
-INT_RANGES = {'delayMs': (0, 60000), 'newSessionEvery': (0, 1000), 'retry429': (0, 10),
-              'retryBackoffSecs': (0, 300), 'maxGoogleRequests': (1, 5000)}
-BOOLS = ('includeRelated', 'rotateOn429')
-
-BACKOFF_CAP_S = 120           # one 429 backoff never waits longer than this
-TIME_MARGIN_S = 45            # stop starting keywords this close to the platform timeout
-FLUSH_EVERY = 25              # dataset rows per push_data call
-OUTPUT_EVERY_S = 60           # progress OUTPUT at most this often (each KV write is billed)
-STATUS_EVERY_S = 15
-SNIPPET_CHARS = 200
-SORRY = 'google.com/sorry'
-TLS_URL = 'https://tls.peet.ws/api/clean'
 
 
-class BudgetSpent(Exception):
-    """maxGoogleRequests reached."""
-
-
-def read_input(raw: dict | None) -> dict:
-    """Defaults for anything missing; ValueError with a plain sentence for anything unusable."""
-    cfg = dict(DEFAULTS)
-    cfg.update({k: v for k, v in (raw or {}).items() if k in DEFAULTS and v is not None})
-    if cfg['client'] not in CLIENTS:
-        raise ValueError(f'client must be one of {", ".join(CLIENTS)}, not {cfg["client"]!r}.')
-    if cfg['warmup'] not in WARMUPS:
-        raise ValueError(f'warmup must be one of {", ".join(WARMUPS)}, not {cfg["warmup"]!r}.')
-    if not isinstance(cfg['keywords'], list):
-        raise ValueError('keywords must be a list of search terms.')
-    kws = [str(k).strip() for k in cfg['keywords'] if str(k).strip()]
-    cfg['keywords'] = list(dict.fromkeys(kws)) or list(g.DEFAULT_KEYWORDS)
-    for k, (lo, hi) in INT_RANGES.items():
-        try:
-            v = int(cfg[k])
-        except (TypeError, ValueError):
-            raise ValueError(f'{k} must be a whole number.') from None
-        if not lo <= v <= hi:
-            raise ValueError(f'{k} must be between {lo} and {hi}, not {v}.')
-        cfg[k] = v
-    for k in BOOLS:
-        cfg[k] = bool(cfg[k])
-    cfg['geo'] = str(cfg['geo']).strip().upper()
-    cfg['timeframe'] = str(cfg['timeframe']).strip() or DEFAULTS['timeframe']
-    cfg['impersonate'] = str(cfg['impersonate']).strip() or DEFAULTS['impersonate']
-    if not isinstance(cfg['proxyConfiguration'], dict):
-        raise ValueError('proxyConfiguration must be an object, as the proxy editor produces.')
-    return cfg
-
-
-def echo_input(cfg: dict) -> dict:
-    """The input as used, with any credentials inside custom proxy URLs masked."""
-    out = json.loads(json.dumps(cfg))
-    pc = out['proxyConfiguration']
-    if pc.get('proxyUrls'):
-        pc['proxyUrls'] = [USERINFO.sub('://***@', u) for u in pc['proxyUrls']]
-    return out
-
-
-def describe_proxy(pc: dict) -> str:
-    if pc.get('useApifyProxy'):
-        groups = '+'.join(pc.get('apifyProxyGroups') or []) or 'auto'
-        country = pc.get('apifyProxyCountry')
-        return f'apify:{groups}' + (f' country={country}' if country else '')
-    if pc.get('proxyUrls'):
-        return f'custom ({len(pc["proxyUrls"])} url)'
-    return 'none'
-
-
-def snippet(body: bytes) -> str | None:
-    text = ' '.join(body[:4000].decode('utf-8', errors='replace').split())
-    return text[:SNIPPET_CHARS] or None
+async def safe_status(message: str) -> None:
+    """Set the run's status message without ever failing the run (see the module docstring)."""
+    try:
+        await Actor.set_status_message(message[:500])
+    except Exception as exc:  # noqa: BLE001
+        Actor.log.debug(f'status message stored but not confirmed by the SDK: {exc}')
 
 
 def seconds_left_in_run() -> float | None:
@@ -132,308 +81,502 @@ def seconds_left_in_run() -> float | None:
     return (timeout_at - datetime.now(timezone.utc)).total_seconds()
 
 
-async def safe_status(message: str) -> None:
-    try:
-        await Actor.set_status_message(message[:500])
-    except Exception as exc:  # noqa: BLE001
-        Actor.log.debug(f'status message stored but not confirmed by the SDK: {exc}')
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec='seconds')
 
 
-def parse_ipinfo(body: bytes) -> dict:
-    d = json.loads(body)
-    return {k: d.get(k) for k in ('ip', 'org', 'country', 'region', 'city', 'hostname')}
+def proxy_lane_count(units: int) -> int:
+    return min(MAX_PROXY_LANES, (units - 1) // KEYWORDS_PER_LANE) if units > KEYWORDS_PER_LANE else 0
 
 
-def parse_tls(body: bytes) -> dict:
-    d = json.loads(body)
-    return {k: d.get(k) for k in ('ja3_hash', 'ja4', 'akamai_hash', 'peetprint_hash')}
+TIME_WORDS = {'now 1-H': 'past hour', 'now 4-H': 'past 4 hours', 'now 1-d': 'past day', 'now 7-d': 'past 7 days',
+              'today 1-m': 'past 30 days', 'today 3-m': 'past 90 days', 'today 12-m': 'past 12 months',
+              'today 5-y': 'past 5 years', 'all': 'since 2004'}
 
 
-class Probe:
-    def __init__(self, cfg: dict, proxy_cfg):
+def describe_period(cfg: Config) -> str:
+    period = TIME_WORDS.get(cfg.time_range) or cfg.time_range.replace(' ', ' to ')
+    return f'{period}, {geo_name(cfg.geo) if cfg.geo else "worldwide"}'
+
+
+# --------------------------------------------------------------------- charging --
+class Delivery:
+    """Pushes rows, charges events, counts what was charged and notices the spending limit."""
+
+    def __init__(self, actor=Actor):
+        self.actor = actor
+        self.cm = actor.get_charging_manager()
+        info = self.cm.get_pricing_info()
+        self.ppe = info.is_pay_per_event
+        self.prices = info.per_event_prices
+        self.max_usd = info.max_total_charge_usd
+        self.reserved = Decimal(0)
+        self.charged = Counter(dict.fromkeys(EVENTS, 0))
+        self.rows = 0
+        self.limit = False
+
+    def reserve(self, events: list[str]) -> Decimal | None:
+        """Hold the worst-case cost of one unit against the spending limit; None when it does not fit.
+        The limit counts as reached only when nothing else is held: budget held by a unit in flight on
+        another lane may come back (a keyword without related queries costs less than its worst case)."""
+        if self.limit:
+            return None
+        if not self.ppe or self.max_usd is None or not Decimal(self.max_usd).is_finite():
+            return Decimal(0)
+        need = sum((Decimal(self.prices.get(e, 0)) for e in events), Decimal(0))
+        left = Decimal(self.max_usd) - self.cm.calculate_total_charged_amount() - self.reserved
+        if need > left:
+            if not self.reserved:
+                self.limit = True
+            return None
+        self.reserved += need
+        return need
+
+    def release(self, amount: Decimal) -> None:
+        self.reserved -= amount
+
+    def _count(self, event: str, result, asked: int) -> int:
+        done = result.charged_count if self.ppe else asked
+        self.charged[event] += done
+        if self.ppe and (result.event_charge_limit_reached or done < asked):
+            self.limit = True
+        return done
+
+    async def push(self, rows: list[dict], event: str) -> int:
+        """Push rows charged as event. Returns how many were delivered: the SDK drops rows it cannot charge."""
+        result = await self.actor.push_data(rows, charged_event_name=event)
+        done = self._count(event, result, len(rows))
+        self.rows += done
+        return done
+
+    async def keyword_row(self, row: dict, has_core: bool, has_related: bool) -> bool:
+        """Deliver one keyword row by the charging rules. False when it was not delivered."""
+        if has_core:
+            if not await self.push([row], KEYWORD_EVENT):
+                return False
+        elif has_related:
+            await self.actor.push_data([row])     # related queries alone: no keyword event
+            self.rows += 1
+        else:
+            return False
+        if has_related:
+            self._count(RELATED_EVENT, await self.actor.charge(event_name=RELATED_EVENT, count=1), 1)
+        return True
+
+
+# -------------------------------------------------------------------------- run --
+class Run:
+    def __init__(self, cfg: Config, delivery: Delivery, transport=None):
         self.cfg = cfg
-        self.proxy_cfg = proxy_cfg
-        self.tag = secrets.token_hex(3)
+        self.delivery = delivery
+        self.transport = transport           # test seam: httpx mock transport
         self.t0 = time.monotonic()
-        self.started = datetime.now(timezone.utc)
-        self.rows: list[dict] = []
-        self.buffer: list[dict] = []
-        self.keyword_results: list[dict] = []
-        self.sessions: list[dict] = []
-        self.sess: Session | None = None
-        self.session = None                # current entry of self.sessions
-        self.google_count = 0
-        self.last_google_end: float | None = None
+        self.tag = secrets.token_hex(3)
+        self.counters = google.Counters()
+        self.lanes: list[google.Lane] = []
         self.stop: str | None = None
-        self.extras: dict = {'tlsFingerprint': None, 'rss': None, 'autocomplete': None}
+        self.trending: dict | None = None
         self.last_output = 0.0
         self.last_status = 0.0
+        self.entries = [{'keyword': k, 'status': 'waiting', 'reasonCode': None, 'reason': None, 'missing': [],
+                         'lane': None} for k in cfg.keywords] if cfg.mode != 'trending' else []
+        self.entries += [{'keyword': k, 'status': 'skipped', 'reasonCode': 'invalid', 'reason': f'Invalid: {why}',
+                          'missing': [], 'lane': None} for k, why in cfg.invalid] if cfg.mode != 'trending' else []
+        left = seconds_left_in_run()
+        self.margin = RUN_SAFETY_MARGIN_S if left is None else min(RUN_SAFETY_MARGIN_S, left / 4)
 
     def elapsed(self) -> float:
         return round(time.monotonic() - self.t0, 1)
 
-    # ------------------------------------------------------------------ requests --
-    async def pace(self) -> None:
-        if self.last_google_end is not None:
-            wait = self.cfg['delayMs'] / 1000 - (time.monotonic() - self.last_google_end)
-            if wait > 0:
-                await asyncio.sleep(wait)
+    def time_left(self) -> bool:
+        """False once the run is inside its safety margin. Used to refuse fresh sessions late in a run."""
+        left = seconds_left_in_run()
+        return left is None or left >= self.margin
 
-    async def call(self, endpoint: str, url: str, *, parse=None, keyword: str | None = None,
-                   index: int | None = None, attempt: int = 1, headers: dict | None = None,
-                   follow: bool = False) -> tuple[dict, object]:
-        """One request, recorded as one row. Returns (row, parsed value or None)."""
-        is_google = endpoint in GOOGLE_ENDPOINTS
-        google_seq = None
-        nid = None
-        if is_google:
-            if self.google_count >= self.cfg['maxGoogleRequests']:
-                raise BudgetSpent
-            await self.pace()
-            self.google_count += 1
-            google_seq = self.google_count
-            nid = self.sess.has_cookie('NID')
-        resp = await self.sess.get(url, headers=headers, follow=follow)
-        if is_google:
-            self.last_google_end = time.monotonic()
+    def time_ok(self) -> bool:
+        """time_left(), and when time is up, the run stops starting units (checked only while units are left)."""
+        if self.time_left():
+            return True
+        self.stop = self.stop or 'time'
+        return False
 
-        value, parsed, error = None, False, resp.error
-        if resp.status is not None and 200 <= resp.status < 300:
-            if parse is None:
-                parsed = True
-            else:
-                try:
-                    value, parsed = parse(resp.body), True
-                except Exception as exc:  # noqa: BLE001
-                    error = f'parse: {type(exc).__name__}: {exc}'[:SNIPPET_CHARS]
-        location = resp.headers.get('location')
-        throttled = resp.status == 429 or SORRY in (location or '') or SORRY in resp.final_url
-        ok = parsed and not throttled
-        row = {
-            'seq': len(self.rows) + 1,
-            'googleSeq': google_seq,
-            'google': is_google,
-            'endpoint': endpoint,
-            'keyword': keyword,
-            'keywordIndex': index,
-            'attempt': attempt,
-            'status': resp.status,
-            'ok': ok,
-            'parsed': parsed,
-            'throttled': throttled,
-            'count': value if type(value) is int else (len(value) if endpoint == 'explore' and value else None),
-            'latencyMs': resp.latency_ms,
-            'bytes': len(resp.body),
-            'bodySha1': hashlib.sha1(resp.body).hexdigest()[:12] if resp.body else None,  # same data twice?
-            'httpVersion': resp.http_version,
-            'redirects': resp.redirects,
-            'location': self.sess.scrub(location)[:SNIPPET_CHARS] if location else None,
-            'retryAfter': resp.headers.get('retry-after'),
-            'error': error,
-            'snippet': None if ok else snippet(resp.body),
-            'nid': nid,
-            'sessionNo': self.session['sessionNo'],
-            'proxySession': self.session['proxySession'],
-            'exitIp': self.session['exitIp'],
-            'client': self.cfg['client'],
-            'elapsedSecs': self.elapsed(),
-            'at': datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
-        }
-        self.rows.append(row)
-        self.buffer.append(row)
-        what = 'ok' if ok else ('THROTTLED' if throttled else 'FAIL')
-        Actor.log.info(f'#{row["seq"]} {endpoint}{f" [{keyword}]" if keyword else ""} a{attempt} -> '
-                       f'{resp.status} {resp.latency_ms} ms {len(resp.body)} B {what}'
-                       + (f' count={row["count"]}' if row['count'] is not None else '')
-                       + (f' | {error}' if error else ''))
-        if len(self.buffer) >= FLUSH_EVERY:
-            await self.flush()
-        return row, value
-
-    async def flush(self) -> None:
-        if not self.buffer:
+    # ---------------------------------------------------------------- lanes --
+    async def open_lanes(self, units: int) -> None:
+        warm = self.cfg.geo or 'US'
+        self.lanes = [google.Lane(0, None, self.tag, warm, self.counters, self.transport)]
+        extra = proxy_lane_count(units)
+        if not extra:
             return
-        batch, self.buffer = self.buffer, []
         try:
-            await Actor.push_data(batch)
-        except Exception as exc:  # noqa: BLE001  the OUTPUT summary still holds the counts
-            Actor.log.warning(f'Could not push {len(batch)} rows: {exc}')
+            proxy_cfg = await Actor.create_proxy_configuration()
+        except Exception as exc:  # noqa: BLE001  a missing proxy means one lane, not a failed run
+            Actor.log.warning(f'Apify Proxy is not available ({type(exc).__name__}: {str(exc)[:200]}); '
+                              f'all keywords run on the direct lane.')
+            return
+        if proxy_cfg is None:
+            return
+        self.lanes += [google.Lane(i, proxy_cfg, self.tag, warm, self.counters, self.transport)
+                       for i in range(1, extra + 1)]
+        Actor.log.info(f'{units} keywords: {len(self.lanes)} lanes (direct + {extra} on Apify datacenter proxy).')
 
-    # ------------------------------------------------------------------ sessions --
-    async def new_session(self) -> None:
-        if self.sess:
-            await self.sess.aclose()
-        no = len(self.sessions) + 1
-        sid = f'gtp{self.tag}_{no}'        # Apify allows [A-Za-z0-9._~], at most 50 chars
-        proxy_url = await self.proxy_cfg.new_url(sid) if self.proxy_cfg else None
-        self.sess = Session(self.cfg['client'], proxy_url, self.cfg['impersonate'])
-        self.session = {'sessionNo': no, 'proxySession': sid if proxy_url else None, 'exitIp': None,
-                        'org': None, 'country': None, 'city': None, 'warmupStatus': None,
-                        'nidAfterWarmup': None, 'startedAtSecs': self.elapsed()}
-        self.sessions.append(self.session)
+    async def close_lanes(self) -> None:
+        for lane in self.lanes:
+            await lane.close()
 
-        _, ip = await self.call('ipify', 'https://api.ipify.org?format=json', parse=lambda b: json.loads(b)['ip'])
-        self.session['exitIp'] = ip
-        _, info = await self.call('ipinfo', 'https://ipinfo.io/json', parse=parse_ipinfo)
-        if info:
-            self.session.update(org=info['org'], country=info['country'], city=info['city'])
-            self.session['exitIp'] = self.session['exitIp'] or info['ip']
-        if no == 1:
-            _, self.extras['tlsFingerprint'] = await self.call('tls', TLS_URL, parse=parse_tls)
+    async def run_units(self, units: list, handle) -> None:
+        """Lanes take units from one queue. A handler returns False to hand its unit back untouched
+        (a proxy lane Google refused on every session, or budget held by another lane): the unit goes
+        back to the front of the queue and that lane takes no more work in this pass. Whatever is left
+        when the lanes are done runs on the direct lane, which never hands a unit back."""
+        queue = deque(units)
 
-        warmup_url = {'home': g.WARMUP_URL, 'rss': g.rss_url(self.cfg['geo'])}.get(self.cfg['warmup'])
-        if warmup_url:
-            row, _ = await self.call('warmup', warmup_url, follow=True)
-            self.session['warmupStatus'] = row['status']
-        self.session['nidAfterWarmup'] = self.sess.has_cookie('NID')
-        Actor.log.info(f'Session {no}: exit IP {self.session["exitIp"]} ({self.session["org"]}, '
-                       f'{self.session["country"]}), warmup {self.session["warmupStatus"] or "skipped"}, NID cookie '
-                       f'{"set" if self.session["nidAfterWarmup"] else "NOT set"}.')
-
-    # ------------------------------------------------------------------ keywords --
-    async def flow(self, index: int, kw: str, attempt: int, res: dict) -> str:
-        """explore -> multiline (-> relatedsearches, comparedgeo). Returns ok, throttled or fail."""
-        cfg = self.cfg
-        hdr = {'Referer': f'{g.BASE}/trends/explore?q={quote(kw)}' + (f'&geo={cfg["geo"]}' if cfg['geo'] else '')}
-        kw_args = {'keyword': kw, 'index': index, 'attempt': attempt, 'headers': hdr}
-        row, widgets = await self.call('explore', g.explore_url(kw, cfg['geo'], cfg['timeframe']),
-                                       parse=g.explore_widgets, **kw_args)
-        if not row['ok']:
-            return 'throttled' if row['throttled'] else 'fail'
-        row, points = await self.call('multiline', g.widget_url('multiline', widgets['TIMESERIES']),
-                                      parse=g.multiline_points, **kw_args)
-        if not row['ok']:
-            return 'throttled' if row['throttled'] else 'fail'
-        res.update(ok=True, points=points)
-        if cfg['includeRelated']:
-            if 'RELATED_QUERIES' in widgets:
-                await self.call('relatedsearches', g.widget_url('relatedsearches', widgets['RELATED_QUERIES']),
-                                parse=g.related_count, **kw_args)
-            if 'GEO_MAP' in widgets:
-                await self.call('comparedgeo', g.widget_url('comparedgeo', widgets['GEO_MAP']),
-                                parse=g.comparedgeo_count, **kw_args)
-        return 'ok'
-
-    async def keyword(self, index: int, kw: str) -> None:
-        cfg = self.cfg
-        res = {'keyword': kw, 'index': index, 'attempts': 0, 'throttled': False, 'ok': False, 'points': None}
-        self.keyword_results.append(res)
-        for attempt in range(1, cfg['retry429'] + 2):
-            res['attempts'] = attempt
-            if await self.flow(index, kw, attempt, res) != 'throttled':
-                return
-            res['throttled'] = True
-            if attempt > cfg['retry429']:
-                return
-            wait = min(cfg['retryBackoffSecs'] * 2 ** (attempt - 1), BACKOFF_CAP_S)
-            left = seconds_left_in_run()
-            if left is not None and left - wait < TIME_MARGIN_S:
-                self.stop = 'time'
-                return
-            Actor.log.warning(f'[{kw}] throttled on attempt {attempt}; waiting {wait} s'
-                              + (', then a new session' if cfg['rotateOn429'] else '') + '.')
-            await asyncio.sleep(wait)
-            if cfg['rotateOn429']:
-                await self.new_session()
-
-    # ----------------------------------------------------------------------- run --
-    async def run(self) -> None:
-        cfg = self.cfg
-        try:
-            await self.new_session()
-            every = cfg['newSessionEvery']
-            for i, kw in enumerate(cfg['keywords']):
-                left = seconds_left_in_run()
-                if left is not None and left < TIME_MARGIN_S:
-                    self.stop = 'time'
-                if self.stop:
-                    break
-                if i and every and i % every == 0:
-                    await self.new_session()
-                await self.keyword(i, kw)
+        async def worker(lane: google.Lane) -> None:
+            while queue and not self.stop and not lane.retired and self.time_ok():
+                unit = queue.popleft()
+                try:
+                    if await handle(lane, unit) is False:
+                        queue.appendleft(unit)
+                        break
+                except Exception as exc:  # noqa: BLE001  one keyword must never crash the run
+                    Actor.log.exception(f'{lane.label}: unexpected error')
+                    if self.cfg.mode == 'trending':
+                        self.trending = {**(self.trending or {}), 'problem': f'unexpected error ({type(exc).__name__})'}
+                    for e in unit if isinstance(unit, list) else [unit] if isinstance(unit, dict) else []:
+                        if e['status'] in ('waiting', 'running'):
+                            self.skip(e, 'error', f'Not saved because of an unexpected error ({type(exc).__name__}: '
+                                                  f'{str(exc)[:150]}). This is on us, not you: please report it.')
+                lane.units += 1
                 await self.report()
-            # After the keywords: the RSS sets NID, so earlier it would spoil warmup none.
-            row, n = await self.call('rss', g.rss_url(cfg['geo']), parse=g.rss_items)
-            self.extras['rss'] = {'status': row['status'], 'items': n}
-            row, n = await self.call('autocomplete', g.autocomplete_url(cfg['keywords'][0]), parse=g.autocomplete_count,
-                                     keyword=cfg['keywords'][0], headers={'Referer': f'{g.BASE}/trends/explore'})
-            self.extras['autocomplete'] = {'status': row['status'], 'topics': n}
-        except BudgetSpent:
-            self.stop = 'maxGoogleRequests'
-            Actor.log.warning(f'Stopped: maxGoogleRequests ({cfg["maxGoogleRequests"]}) reached.')
+
+        await asyncio.gather(*(worker(lane) for lane in self.lanes))
+        if queue and not self.stop:
+            await worker(self.lanes[0])
+        for e in self.entries:
+            if e['status'] in ('waiting', 'running'):
+                self.skip(e, self.stop or 'time', f'Not fetched: {STOP_REASONS[self.stop or "time"]}')
+
+    @staticmethod
+    def skip(entry: dict, code: str, reason: str) -> None:
+        entry.update(status='skipped', reasonCode=code, reason=reason)
+
+    def no_budget(self) -> bool | None:
+        """After a failed reservation: None when the limit is reached (the run stops), False when the
+        budget is only held by units in flight on other lanes (this lane hands its unit back)."""
+        if self.delivery.limit:
+            self.stop = 'limit'
+            return None
+        return False
+
+    def hand_back(self, lane: google.Lane, entries: list[dict], problem: str) -> bool:
+        """True when a proxy lane got nothing but throttles for a unit: the lane retires and the unit
+        goes back to the queue for the other lanes and, in the end, the direct lane."""
+        if lane.proxy_cfg is None:
+            return False
+        lane.retired = True
+        for e in entries:
+            e.update(status='waiting', lane=None)
+        Actor.log.warning(f'{lane.label}: {problem} on every session; it takes no more keywords and '
+                          f'"{entries[0]["keyword"]}" goes back to the queue.')
+        return True
+
+    # ------------------------------------------------------------- keywords --
+    async def keyword_unit(self, lane: google.Lane, unit: list[dict]) -> bool | None:
+        cfg = self.cfg
+        keywords = [e['keyword'] for e in unit]
+        events = ([KEYWORD_EVENT] if cfg.wants('interestOverTime') or cfg.wants('interestByRegion') else []) \
+            + ([RELATED_EVENT] if cfg.wants('relatedQueries') else [])
+        reserved = self.delivery.reserve(events * len(unit))
+        if reserved is None:
+            return self.no_budget()
+        try:
+            for e in unit:
+                e.update(status='running', lane=lane.index)
+            got = await google.fetch_explore(lane, keywords, cfg, self.time_left)
+            nothing = got.timeline is None and got.regions is None and not got.related
+            if got.throttled and nothing and self.hand_back(lane, unit, got.throttled):
+                return False
+            scraped = now_iso()
+            for i, entry in enumerate(unit):
+                await self.deliver_keyword(entry, i, keywords, got, scraped, lane)
         finally:
-            await self.flush()
-            if self.sess:
-                await self.sess.aclose()
+            self.delivery.release(reserved)
+        return None
+
+    async def deliver_keyword(self, entry: dict, i: int, keywords: list[str], got: google.Explore, scraped: str,
+                              lane: google.Lane) -> None:
+        cfg = self.cfg
+        missing: list[str] = []
+        why: dict[str, str] = {}
+
+        def lack(part: str, fetched: bool, key: str | None = None) -> None:
+            """Note a part asked for but empty, with why: Google's refusal, a throttle that outlasted every
+            retry (only for parts never fetched), or Google answering with nothing."""
+            missing.append(part)
+            problem = got.problems.get(key or part) or got.problems.get('explore')
+            if not problem and not fetched and got.throttled:
+                problem = f'{got.throttled} after every retry'
+            why[part] = problem or 'Google sent none'
+
+        points = average = None
+        if cfg.wants('interestOverTime'):
+            if got.timeline and got.timeline[1][i]:
+                points, average = got.timeline[0][i], got.timeline[2][i]
+            else:
+                lack('interestOverTime', got.timeline is not None)
+        region_rows = None
+        if cfg.wants('interestByRegion'):
+            if got.regions and got.regions[i]:
+                region_rows = got.regions[i]
+            else:
+                lack('interestByRegion', got.regions is not None)
+        related = None
+        if cfg.wants('relatedQueries'):
+            rq = got.related.get(i)
+            if rq and (rq['top'] or rq['rising']):
+                related = rq
+            else:
+                lack('relatedQueries', i in got.related, f'relatedQueries:{i}')
+
+        has_core, has_related = bool(points or region_rows), related is not None
+        kw = entry['keyword']
+        if not has_core and not has_related:
+            entry['missing'] = missing
+            if got.problems.get('explore'):
+                self.skip(entry, 'error', f'Not saved or charged: {got.problems["explore"]}.')
+            elif got.throttled:
+                self.skip(entry, 'throttled', f'Not saved or charged: {got.throttled} even after a retry and '
+                                              f'{google.MAX_ROTATIONS} fresh sessions. Run it again later.')
+            else:
+                self.skip(entry, 'no_data', 'Not saved or charged: no data from Google. It has too little search '
+                                            'interest for this keyword in this place and time.')
+            Actor.log.warning(f'[{kw}] {entry["reason"]}')
+            return
+
+        row = parse.keyword_row(kw, keywords, cfg, got.when, scraped, points=points, average=average,
+                                region_level=got.region_level if cfg.wants('interestByRegion') else None,
+                                region_rows=region_rows, related_queries=related, missing=missing)
+        if not await self.delivery.keyword_row(row, has_core, has_related):
+            self.skip(entry, 'limit', f'Not saved: {STOP_REASONS["limit"]}')
+            self.stop = 'limit'
+            return
+        if self.delivery.limit:
+            self.stop = 'limit'
+        entry['missing'] = missing
+        if missing:
+            entry.update(status='partial', reasonCode='ok', reason='Saved without ' + '; '.join(
+                f'{PART_NAMES[p]} ({why[p]})' for p in missing) + '.')
+        else:
+            entry.update(status='ok', reasonCode='ok', reason=None)
+        rq = related or {'top': [], 'rising': []}
+        Actor.log.info(f'[{kw}] saved on the {lane.label}: {len(points or [])} points, '
+                       f'{len(region_rows or [])} regions, '
+                       f'{len(rq["top"])} top + {len(rq["rising"])} rising queries'
+                       + (f'; missing {", ".join(missing)}' if missing else ''))
+
+    # ------------------------------------------------------------- trending --
+    async def trending_unit(self, lane: google.Lane, _unit) -> None:
+        cfg = self.cfg
+        items, rss, problem = await google.fetch_trending(lane, cfg, self.time_left)
+        scraped = now_iso()
+        info = {'geo': cfg.geo, 'geoName': geo_name(cfg.geo), 'trendingHours': cfg.trending_hours,
+                'trendingCategory': cfg.trending_category, 'source': None, 'found': 0, 'afterFilter': 0,
+                'saved': 0, 'problem': problem, 'note': None}
+        self.trending = info
+        rows: list[dict] = []
+        if items is not None:
+            info['source'] = 'full list'
+            info['found'] = len(items)
+            keep = [it for it in items if parse.has_topic(it, cfg.trending_category_id)]
+            info['afterFilter'] = len(keep)
+            rows = [parse.trend_row(it, cfg.geo, cfg.trending_hours, cfg.news_per_trend, scraped) for it in keep]
+        elif rss:
+            info['source'] = 'rss feed'
+            try:
+                rows = parse.rss_rows(rss, cfg.geo, cfg.news_per_trend, scraped)
+            except Exception as exc:  # noqa: BLE001  ElementTree.ParseError or an odd feed
+                info['problem'] = f'{problem}; the RSS feed could not be read ({type(exc).__name__})'
+                rows = []
+            info['found'] = len(rows)
+            if cfg.trending_category_id is not None:
+                info['note'] = ('Google\'s full Trending Now list failed and its RSS feed has no topics, so nothing '
+                                f'could be filtered to {cfg.trending_category}. Run it again, or choose every topic.')
+                rows = []
+            elif rows:
+                info['note'] = ('Google\'s full Trending Now list failed, so these are the trends in Google\'s RSS '
+                                'feed (about 10, without growth, topics or end time).')
+            info['afterFilter'] = len(rows)
+        if cfg.max_items:
+            rows = rows[:cfg.max_items]
+        for start in range(0, len(rows), TREND_BATCH):
+            batch = rows[start:start + TREND_BATCH]
+            info['saved'] += await self.delivery.push(batch, TREND_EVENT)
+            if self.delivery.limit:
+                self.stop = 'limit'
+                break
+        Actor.log.info(f'Trending Now {cfg.geo} {cfg.trending_hours} h: {info["found"]} found ({info["source"]}), '
+                       f'{info["afterFilter"]} after the topic filter, {info["saved"]} saved.')
+
+    # ----------------------------------------------------------- suggestions --
+    async def suggestion_unit(self, lane: google.Lane, entry: dict) -> bool | None:
+        reserved = self.delivery.reserve([SUGGESTIONS_EVENT])
+        if reserved is None:
+            return self.no_budget()
+        try:
+            entry.update(status='running', lane=lane.index)
+            topics, problem, throttled = await google.fetch_suggestions(lane, entry['keyword'], self.time_left)
+            if throttled and self.hand_back(lane, [entry], problem):
+                return False
+            if not topics:
+                if throttled:
+                    self.skip(entry, 'throttled', f'Not saved or charged: {problem} even after a retry and '
+                                                  f'{google.MAX_ROTATIONS} fresh sessions. Run it again later.')
+                elif problem:
+                    self.skip(entry, 'error', f'Not saved or charged: {problem}.')
+                else:
+                    self.skip(entry, 'no_data', 'Not saved or charged: no data from Google. It matched no topics to '
+                                                'this keyword.')
+                Actor.log.warning(f'[{entry["keyword"]}] {entry["reason"]}')
+                return
+            row = {'keyword': entry['keyword'], 'suggestions': topics, 'scrapedAt': now_iso()}
+            if not await self.delivery.push([row], SUGGESTIONS_EVENT):
+                self.skip(entry, 'limit', f'Not saved: {STOP_REASONS["limit"]}')
+                self.stop = 'limit'
+                return
+            if self.delivery.limit:
+                self.stop = 'limit'
+            entry.update(status='ok', reasonCode='ok', reason=None)
+            Actor.log.info(f'[{entry["keyword"]}] {len(topics)} topics on the {lane.label}.')
+        finally:
+            self.delivery.release(reserved)
+
+    # --------------------------------------------------------------- summary --
+    def counts(self) -> dict:
+        by = Counter(e['status'] for e in self.entries)
+        return {'asked': len(self.entries), 'saved': by['ok'] + by['partial'], 'partial': by['partial'],
+                'skipped': by['skipped']}
+
+    def message(self, final: bool) -> str:
+        cfg = self.cfg
+        c = self.counts()
+        took = f'{self.counters.requests} requests to Google in {self.elapsed():.0f} s.'
+        if cfg.mode == 'trending':
+            t = self.trending or {}
+            if not final:
+                return 'Reading Google\'s Trending Now list.'
+            if t.get('saved'):
+                topic = f', topic {cfg.trending_category}' if cfg.trending_category != 'all' else ''
+                head = (f'Saved {t["saved"]:,} Trending Now searches for {geo_name(cfg.geo)}, '
+                        f'past {cfg.trending_hours} hours{topic}.')
+            elif t.get('source') == 'full list' and not t.get('found'):
+                head = (f'Google listed no Trending Now searches for {geo_name(cfg.geo)} in the past '
+                        f'{cfg.trending_hours} hours.')
+            elif t.get('found') and self.stop == 'limit':
+                head = (f'Google listed {t["found"]:,} Trending Now searches for {geo_name(cfg.geo)}, but none were '
+                        f'saved.')
+            elif t.get('found') and not t.get('afterFilter'):
+                head = (f'Google listed {t["found"]:,} trends for {geo_name(cfg.geo)}, but none under the topic '
+                        f'{cfg.trending_category}.')
+            else:
+                why = t.get('problem') or 'no answer'
+                head = f'No Trending Now searches could be read for {geo_name(cfg.geo)} ({why}).'
+            parts = [head] + ([t['note']] if t.get('note') else [])
+        else:
+            what = 'topic suggestions for' if cfg.mode == 'suggestions' else 'data for'
+            verb = 'Saved' if final else 'So far saved'
+            scope = '' if cfg.mode == 'suggestions' else f' ({describe_period(cfg)})'
+            parts = [f'{verb} {what} {c["saved"]} of {c["asked"]} keywords{scope}.']
+            if c['partial']:
+                parts.append(f'{c["partial"]} of them without some parts, listed in "missing".')
+            if final:
+                stopped = [e for e in self.entries if e['reasonCode'] in ('limit', 'time')]
+                skipped = [e for e in self.entries if e['status'] == 'skipped' and e not in stopped]
+                for e in skipped[:5]:
+                    parts.append(f'"{e["keyword"]}": {e["reason"]}')
+                if len(skipped) > 5:
+                    parts.append(f'{len(skipped) - 5} more skipped, see OUTPUT.')
+                if stopped:
+                    parts.append(f'{len(stopped)} keyword{"s were" if len(stopped) > 1 else " was"} not saved.')
+        if self.stop and final:
+            parts.append(f'The run stopped early because {STOP_REASONS[self.stop]}')
+        parts.append(took)
+        return ' '.join(parts)
 
     def output(self, status: str) -> dict:
-        cfg = self.cfg
+        d = self.delivery
         return {
             'status': status,
+            'message': self.message(status != 'running'),
+            'mode': self.cfg.mode,
             'stopReason': self.stop,
-            'measuredAt': self.started.isoformat(timespec='seconds'),
+            'counts': self.counts() if self.cfg.mode != 'trending' else None,
+            'trending': self.trending,
+            'rowsSaved': d.rows,
+            'chargedEvents': dict(d.charged),
+            'payPerEvent': d.ppe,
+            'googleRequests': self.counters.requests,
+            'throttledRequests': self.counters.throttled,
+            'failedRequests': self.counters.failed,
             'elapsedSecs': self.elapsed(),
-            'client': cfg['client'],
-            'clientVersion': version(cfg['client']),
-            'impersonate': cfg['impersonate'] if cfg['client'] == 'curl_cffi' else None,
-            'proxy': describe_proxy(cfg['proxyConfiguration']),
-            'googleRequests': self.google_count,
-            **summarize(self.rows, self.keyword_results),
-            **self.extras,
-            'sessions': self.sessions,
-            'keywordResults': self.keyword_results,
-            'input': echo_input(cfg),
+            'lanes': [{'lane': ln.index, 'proxy': ln.proxy_cfg is not None, 'sessions': ln.sessions,
+                       'requests': ln.requests, 'units': ln.units, 'retired': ln.retired} for ln in self.lanes],
+            'keywords': self.entries,
         }
 
-    def headline(self) -> str:
-        s = summarize(self.rows, self.keyword_results)
-        gg, kw = s['google'], s['keywords']
-        first = gg['firstThrottled']
-        return (f'{kw["succeeded"]}/{len(self.cfg["keywords"])} keywords ok; Google {gg["ok"]}/{gg["requests"]} ok, '
-                f'{gg["count429"]} x 429' + (f' (first at Google request #{first["googleSeq"]})' if first else '')
-                + f'; {self.elapsed():.0f} s.')
-
-    async def report(self) -> None:
+    async def report(self, final: bool = False) -> None:
         now = time.monotonic()
-        if now - self.last_status >= STATUS_EVERY_S:
+        if final or now - self.last_status >= STATUS_EVERY_S:
             self.last_status = now
-            await safe_status(self.headline())
-        if now - self.last_output >= OUTPUT_EVERY_S:
+            await safe_status(self.message(final))
+        if final or now - self.last_output >= OUTPUT_EVERY_S:
             self.last_output = now
+            status = ('done' if self.delivery.rows else 'failed') if final else 'running'
             try:
-                await Actor.set_value('OUTPUT', self.output('running'))
+                await Actor.set_value('OUTPUT', self.output(status))
             except Exception as exc:  # noqa: BLE001
-                Actor.log.warning(f'Could not refresh OUTPUT: {exc}')
+                Actor.log.warning(f'Could not write the OUTPUT record: {exc}')
+
+    async def execute(self) -> None:
+        cfg = self.cfg
+        try:
+            if cfg.mode == 'trending':
+                await self.open_lanes(1)
+                await self.run_units([None], self.trending_unit)
+            elif cfg.mode == 'compare':
+                await self.open_lanes(1)
+                await self.run_units([[e for e in self.entries if e['status'] == 'waiting']], self.keyword_unit)
+            else:
+                units = [e for e in self.entries if e['status'] == 'waiting']
+                await self.open_lanes(len(units))
+                handle = self.suggestion_unit if cfg.mode == 'suggestions' else \
+                    (lambda lane, e: self.keyword_unit(lane, [e]))
+                await self.run_units(units, handle)
+        finally:
+            await self.close_lanes()
 
 
 async def main() -> None:
     async with Actor:
+        raw = await Actor.get_input()
         try:
-            cfg = read_input(await Actor.get_input())
-        except ValueError as exc:
+            cfg = parse_input(raw)
+        except InputError as exc:
+            await Actor.set_value('OUTPUT', {'status': 'failed', 'message': str(exc)})
             await Actor.fail(status_message=str(exc))
             return
-        proxy_desc = describe_proxy(cfg['proxyConfiguration'])
-        Actor.log.info(f'Google Trends Probe: client={cfg["client"]} proxy={proxy_desc} '
-                       f'keywords={len(cfg["keywords"])} delayMs={cfg["delayMs"]} '
-                       f'newSessionEvery={cfg["newSessionEvery"]} retry429={cfg["retry429"]}')
-        try:
-            proxy_cfg = await Actor.create_proxy_configuration(actor_proxy_input=cfg['proxyConfiguration'])
-        except Exception as exc:  # noqa: BLE001  a refused proxy group is a result, not a crash
-            err = USERINFO.sub('://***@', f'{type(exc).__name__}: {exc}')[:500]
-            Actor.log.warning(f'Proxy {proxy_desc} refused: {err}')
-            await Actor.set_value('OUTPUT', {'status': 'proxy_refused', 'proxy': proxy_desc, 'proxyError': err,
-                                             'measuredAt': datetime.now(timezone.utc).isoformat(timespec='seconds'),
-                                             'input': echo_input(cfg)})
-            await safe_status(f'Proxy {proxy_desc} refused: {err}')
-            return
-
-        probe = Probe(cfg, proxy_cfg)
-        await probe.run()
-        await Actor.set_value('OUTPUT', probe.output('done' if not probe.stop else 'stopped'))
-        message = probe.headline()
+        delivery = Delivery()
+        Actor.log.info(f'Google Trends Scraper API: mode={cfg.mode} keywords={len(cfg.keywords)} geo={cfg.geo or "-"} '
+                       f'timeRange="{cfg.time_range}" dataTypes={",".join(cfg.data_types)} '
+                       f'property={cfg.search_property} '
+                       f'category={cfg.category} payPerEvent={delivery.ppe} maxTotalChargeUsd={delivery.max_usd}')
+        for kw, why in cfg.invalid:
+            Actor.log.warning(f'Skipped "{kw}": {why}')
+        run = Run(cfg, delivery)
+        await run.execute()
+        message = run.message(True)
         Actor.log.info(message)
-        await safe_status(message)
+        await run.report(final=True)
+        if not delivery.rows:
+            await Actor.fail(status_message=message[:500])
 
 
 if __name__ == '__main__':

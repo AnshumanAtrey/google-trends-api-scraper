@@ -1,168 +1,120 @@
 {
-  "title": "Google Trends Probe",
-  "description": "Measures how Google Trends answers from where this run exits: every request becomes one dataset row (endpoint, status, latency, bytes, exit IP) and the OUTPUT record sums it up. Leave everything empty to run the default battery: curl_cffi as Chrome, no proxy, 30 keywords, 1.5 s between Google requests.",
+  "title": "Google Trends Scraper API input",
+  "description": "Type keywords and press Start. Everything else is optional: left as it is, you get the past 12 months, worldwide, with interest over time, interest by region and related queries.",
   "type": "object",
   "schemaVersion": 1,
   "properties": {
-    "client": {
-      "title": "HTTP client",
+    "mode": {
+      "title": "Report type (mode)",
       "type": "string",
-      "description": "curl_cffi sends Chrome's TLS and HTTP/2 fingerprint. httpx sends Python's TLS fingerprint over HTTP/1.1 with a Chrome User-Agent, like a plain scraper.",
+      "description": "Choose the report type. keywords: each keyword on its own 0 to 100 scale. compare: 2 to 5 keywords on one shared scale, like typing them side by side on trends.google.com. trending: every Trending Now search in a country. suggestions: the topics Google matches each keyword to.",
       "editor": "select",
-      "enum": [
-        "curl_cffi",
-        "httpx"
-      ],
-      "enumTitles": [
-        "curl_cffi (Chrome TLS impersonation)",
-        "httpx (plain Python)"
-      ],
-      "default": "curl_cffi",
-      "sectionCaption": "Client and proxy"
+      "enum": ["keywords", "compare", "trending", "suggestions"],
+      "enumTitles": ["Each keyword alone (keywords)", "Compare 2-5 keywords (compare)", "Trending Now list (trending)", "Topic suggestions (suggestions)"],
+      "default": "keywords"
     },
-    "impersonate": {
-      "title": "curl_cffi browser",
-      "type": "string",
-      "description": "curl_cffi impersonation target, such as chrome (the newest Chrome curl_cffi knows) or chrome146. Ignored by httpx.",
-      "editor": "textfield",
-      "default": "chrome"
-    },
-    "proxyConfiguration": {
-      "title": "Proxy",
-      "type": "object",
-      "description": "No proxy by default, so traffic exits from the Apify server itself. Pick a datacenter or residential group to compare; a group the account cannot use ends the run with the refusal in OUTPUT.",
-      "editor": "proxy",
-      "default": {
-        "useApifyProxy": false
-      }
-    },
-    "keywords": {
-      "title": "Keywords",
+    "searchTerms": {
+      "title": "Keywords (searchTerms)",
       "type": "array",
-      "description": "One explore flow per keyword, in order. Empty uses 30 varied real searches.",
+      "description": "Enter the keywords to look up, one per line, such as bitcoin or taylor swift. A topic id from suggestions mode, such as /m/05p0rrx (Bitcoin), works too. In compare mode, enter 2 to 5. Not used for Trending Now. Same as kw_list in pytrends and q in SerpApi.",
       "editor": "stringList",
-      "default": [
-        "bitcoin",
-        "taylor swift",
-        "chatgpt",
-        "weather",
-        "iphone 17",
-        "world cup",
-        "python",
-        "tesla",
-        "recipe",
-        "nba",
-        "ozempic",
-        "netflix",
-        "amazon",
-        "cricket",
-        "election",
-        "minecraft",
-        "flights",
-        "yoga",
-        "gold price",
-        "mortgage rates",
-        "air fryer",
-        "anime",
-        "stock market",
-        "ramen",
-        "electric car",
-        "hurricane",
-        "black friday",
-        "coffee",
-        "diwali",
-        "fußball"
-      ],
-      "sectionCaption": "What to ask"
+      "prefill": ["bitcoin", "chatgpt"],
+      "example": ["bitcoin", "chatgpt"]
     },
     "geo": {
-      "title": "Country",
+      "title": "Country (geo)",
       "type": "string",
-      "description": "Two-letter country code for explore, such as US. Empty means worldwide. The trending RSS uses US when this is empty.",
+      "description": "Enter a two-letter country code such as US, GB or IN, or leave it empty for worldwide. For Trending Now it is the country to read (US when empty). Same as geo in pytrends and SerpApi.",
       "editor": "textfield",
+      "pattern": "^([A-Za-z]{2})?$",
       "default": ""
     },
-    "timeframe": {
-      "title": "Time range",
+    "timeRange": {
+      "title": "Time period (timeRange)",
       "type": "string",
-      "description": "Google Trends time parameter, such as today 12-m (53 weekly points), today 3-m, now 7-d or 2024-01-01 2024-12-31.",
-      "editor": "textfield",
+      "description": "Pick the time period to look at, or type your own dates as two YYYY-MM-DD dates with a space, such as 2024-01-01 2024-06-30. Google picks the step: minutes for the past hour, hours for 7 days, days for 3 months, weeks for 12 months. Same as timeframe in pytrends and date in SerpApi.",
+      "editor": "select",
+      "enumSuggestedValues": ["now 1-H", "now 4-H", "now 1-d", "now 7-d", "today 1-m", "today 3-m", "today 12-m", "today 5-y", "all"],
+      "enumTitles": ["Past hour (now 1-H)", "Past 4 hours (now 4-H)", "Past day (now 1-d)", "Past 7 days (now 7-d)", "Past 30 days (today 1-m)", "Past 90 days (today 3-m)", "Past 12 months (today 12-m)", "Past 5 years (today 5-y)", "Since 2004 (all)"],
+      "pattern": "^(now (1-H|4-H|1-d|7-d)|today (1-m|3-m|12-m|5-y)|all|\\d{4}-\\d{2}-\\d{2} \\d{4}-\\d{2}-\\d{2})$",
       "default": "today 12-m"
     },
-    "includeRelated": {
-      "title": "Also fetch related queries and region breakdown",
-      "type": "boolean",
-      "description": "Adds widgetdata/relatedsearches and widgetdata/comparedgeo after each successful multiline, two more Google requests per keyword.",
-      "default": false
-    },
-    "warmup": {
-      "title": "Cookie warmup per session",
-      "type": "string",
-      "description": "What each session fetches first for the NID cookie. home: https://trends.google.com/trends/, as a browser does (about 690 KB). rss: the trending RSS, which also sets NID (about 21 KB, 33x less residential traffic). none: no warmup, to test whether explore needs the cookie at all.",
+    "dataTypes": {
+      "title": "Data to fetch (dataTypes)",
+      "type": "array",
+      "description": "Choose the data to fetch for each keyword: interest over time, interest by region and related queries (top and rising). All three by default. Related queries are billed as their own event per keyword, see Pricing. Fewer parts also finish sooner. Same idea as data_type in SerpApi.",
       "editor": "select",
-      "enum": [
-        "home",
-        "rss",
-        "none"
-      ],
-      "enumTitles": [
-        "home (the Trends home page)",
-        "rss (trending RSS, light)",
-        "none (no cookie)"
-      ],
-      "default": "home"
+      "items": {
+        "type": "string",
+        "enum": ["interestOverTime", "interestByRegion", "relatedQueries"],
+        "enumTitles": ["Timeline (interestOverTime)", "By region (interestByRegion)", "Related queries (relatedQueries)"]
+      },
+      "default": ["interestOverTime", "interestByRegion", "relatedQueries"],
+      "sectionCaption": "Keyword options"
     },
-    "delayMs": {
-      "title": "Gap between Google requests (ms)",
+    "property": {
+      "title": "Search type (property)",
+      "type": "string",
+      "description": "Pick the search type to measure: web search (the default), News, Images, YouTube or Google Shopping. Same as gprop in pytrends and SerpApi (froogle is Google's own code for Shopping).",
+      "editor": "select",
+      "enum": ["web", "news", "images", "youtube", "froogle"],
+      "enumTitles": ["Web search (web)", "News search (news)", "Image search (images)", "YouTube search (youtube)", "Google Shopping (froogle)"],
+      "default": "web"
+    },
+    "category": {
+      "title": "Subject area (category)",
       "type": "integer",
-      "description": "Time from the end of one Google request to the start of the next. Requests are never sent in parallel.",
+      "description": "Enter a subject area number to count only searches about one subject, or 0 for all subjects (the default). These are Google Trends category ids, for example 7 Finance, 5 Computers & Electronics, 71 Food & Drink, 20 Sports, 3 Arts & Entertainment. Same as cat in pytrends and SerpApi.",
       "editor": "number",
       "minimum": 0,
-      "maximum": 60000,
-      "default": 1500,
-      "sectionCaption": "Pacing and retries"
+      "default": 0
     },
-    "newSessionEvery": {
-      "title": "New session every N keywords",
-      "type": "integer",
-      "description": "Fresh cookie jar, new warmup and, behind a proxy, a new proxy session (new exit IP) every N keywords. 0 keeps one session for the whole run.",
-      "editor": "number",
-      "minimum": 0,
-      "maximum": 1000,
-      "default": 10
+    "regionLevel": {
+      "title": "Region detail (regionLevel)",
+      "type": "string",
+      "description": "Choose the region detail for interest by region: countries, states or provinces, or cities. auto lets Google choose: countries for worldwide, states or provinces inside one country. Same as resolution in pytrends.",
+      "editor": "select",
+      "enum": ["auto", "country", "region", "city"],
+      "enumTitles": ["Let Google choose (auto)", "Countries (country)", "States or provinces (region)", "Cities (city)"],
+      "default": "auto"
     },
-    "retry429": {
-      "title": "Retries after a 429",
+    "trendingHours": {
+      "title": "Trending period (trendingHours)",
+      "type": "string",
+      "description": "Pick the trending period for Trending Now: the past 4, 24 or 48 hours, or the past 7 days (168 hours). Used only in trending mode. Same as hours in SerpApi's Trending Now API.",
+      "editor": "select",
+      "enum": ["4", "24", "48", "168"],
+      "enumTitles": ["Past 4 hours (4)", "Past 24 hours (24)", "Past 48 hours (48)", "Past 7 days (168)"],
+      "default": "24",
+      "sectionCaption": "Trending Now options"
+    },
+    "trendingCategory": {
+      "title": "Trend topic (trendingCategory)",
+      "type": "string",
+      "description": "Pick a trend topic to keep only the trends Google files under it, such as sports, technology or politics. all keeps every trend (the default). These are Google's 19 Trending Now topics, a different list from the subject area numbers. Used only in trending mode. Same as category_id in SerpApi's Trending Now API, which takes Google's numbers (18 is technology).",
+      "editor": "select",
+      "enum": ["all", "autos", "beauty", "business", "climate", "entertainment", "food", "games", "health", "hobbies", "jobs", "law", "other", "pets", "politics", "science", "shopping", "sports", "technology", "travel"],
+      "enumTitles": ["Every topic (all)", "Autos and vehicles (autos)", "Beauty and fashion (beauty)", "Business and finance (business)", "Climate", "Entertainment", "Food and drink (food)", "Games", "Health", "Hobbies and leisure (hobbies)", "Jobs and education (jobs)", "Law and government (law)", "Other", "Pets and animals (pets)", "Politics", "Science", "Shopping", "Sports", "Technology", "Travel and transport (travel)"],
+      "default": "all"
+    },
+    "newsPerTrend": {
+      "title": "News stories (newsPerTrend)",
       "type": "integer",
-      "description": "How many times to retry a keyword's explore and multiline flow after HTTP 429 or a redirect to google.com/sorry. 0 records the 429 and moves on.",
+      "description": "Enter how many news stories to attach to each trend, from 0 to 10. Default 3. News is included in the trend price. Used only in trending mode.",
       "editor": "number",
       "minimum": 0,
       "maximum": 10,
-      "default": 2
+      "unit": "articles per trend",
+      "default": 3
     },
-    "retryBackoffSecs": {
-      "title": "First backoff after a 429 (s)",
+    "maxItems": {
+      "title": "Number of trends (maxItems)",
       "type": "integer",
-      "description": "Wait before the first retry; it doubles for each further retry, capped at 120 s.",
+      "description": "Enter the number of trends to save at most, to cap what a Trending Now run costs. 0 saves every trend (the default). Used only in trending mode.",
       "editor": "number",
       "minimum": 0,
-      "maximum": 300,
-      "default": 10
-    },
-    "rotateOn429": {
-      "title": "New session before each retry",
-      "type": "boolean",
-      "description": "On: a 429 retry starts a new session (new cookies and, behind a proxy, a new exit IP). Off: it retries on the same session.",
-      "default": true
-    },
-    "maxGoogleRequests": {
-      "title": "Max Google requests",
-      "type": "integer",
-      "description": "Hard cap on requests to Google in one run, retries and warmups included. IP lookups do not count.",
-      "editor": "number",
-      "minimum": 1,
-      "maximum": 5000,
-      "default": 300
+      "unit": "trends",
+      "default": 0
     }
   }
 }

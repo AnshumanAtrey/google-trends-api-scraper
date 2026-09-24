@@ -1,3 +1,2 @@
 apify>=3.4,<4  # pinned: SDK 4.0 made push_data's charging argument keyword-only (holehe outage 2026-09-12); the portfolio runs 3.4.x
-httpx>=0.28,<0.29  # 0.x: a minor bump may break; the plain-Python-client baseline (HTTP/1.1, Python TLS fingerprint)
-curl_cffi>=0.16,<0.17  # 0.x: a minor bump may break; Chrome TLS/HTTP2 impersonation, the client under test
+httpx>=0.28,<0.29  # 0.x: a minor bump may break; 0.28.1 ran the probe on Apify (15/15 keywords direct and via datacenter proxy) and the tests

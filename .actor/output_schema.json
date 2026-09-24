@@ -1,0 +1,20 @@
+{
+  "actorOutputSchemaVersion": 1,
+  "title": "Google Trends Scraper API output",
+  "description": "Google Trends rows in the default dataset (switch between the Keywords, Interest over time, Interest by region, Trending Now and Topic suggestions views), plus a run summary record.",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "string",
+      "title": "Results table (results)",
+      "description": "Every row of the run in the default dataset: one per keyword, per Trending Now search or per suggestions lookup. Export as JSON, CSV or Excel.",
+      "template": "{{links.apiDefaultDatasetUrl}}/items"
+    },
+    "summary": {
+      "type": "string",
+      "title": "Run summary (summary)",
+      "description": "The OUTPUT record in the default key-value store: every keyword you typed with its status (ok, partial or skipped), the reason in plain English and the parts Google left empty.",
+      "template": "{{links.apiDefaultKeyValueStoreUrl}}/records/OUTPUT"
+    }
+  }
+}

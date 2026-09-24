@@ -3,10 +3,11 @@
 # node_modules/ are always left out by the CLI, and .actor/ is always sent.
 # README.md must stay in the build: the listing is built from it.
 
-# Tests: not needed at run time.
+# Tests and their saved Google answers: not needed at run time.
 tests/
 .pytest_cache/
 
-# CI and repo tooling.
+# Recorded platform runs, CI and repo tooling.
+runs/
 .github/
 scripts/

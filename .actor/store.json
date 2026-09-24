@@ -1,25 +1,25 @@
 {
-  "$comment": "Listing fields that apify push never sends, applied by scripts/store-metadata.mjs after every deploy. This actor is a private, unpriced research probe: no pricing block, so the script never touches pricing. seoTitle, seoDescription and exampleRunInput are required by the script even for a private actor.",
+  "$comment": "Listing fields that apify push never sends, applied by scripts/store-metadata.mjs after every deploy. No pricing block yet on purpose: pricing is set after the cost test on Apify (proposed events keyword, related-queries, trend and suggestions are in manager/drafts/google-trends-scraper/listing.json; the event names must equal the constants in src/main.py). seoTitle, seoDescription and exampleRunInput are required by the script even for a private actor.",
   "actorId$comment": "The actor is pinned by ID: CI pushes to this ID (actor-id input of apify/push-actor-action) and store-metadata.mjs looks it up by ID, so renaming `name` in actor.json renames the SAME actor (logo, runs and history stay) instead of creating a new one.",
   "actorId": "HSTOlg2W6dmefYbne",
   "seoTitle": "Google Trends Scraper API: Interest and Trending Now",
   "seoDescription": "Scrape Google Trends with no API key: interest over time, related queries, regions, 5-keyword compare and every Trending Now search. Pytrends alternative.",
+  "exampleRunInput$comment": "Equal to the INPUT_SCHEMA prefill, so it is also Apify's daily QA input (must succeed with rows within 5 minutes). Local run of build 1.0 on 2026-09-24 (home IP): 2 rows, 9 requests to Google, 18 s. At the proposed prices: 2 keyword + 2 related-queries events.",
   "exampleRunInput": {
-    "client": "curl_cffi",
-    "keywords": [
+    "mode": "keywords",
+    "searchTerms": [
       "bitcoin",
-      "taylor swift",
-      "weather"
+      "chatgpt"
     ],
-    "delayMs": 1500
+    "timeRange": "today 12-m"
   },
   "actorPermissionLevel": "LIMITED_PERMISSIONS",
-  "isPublic$comment": "Private on purpose: a measurement tool for the Google Trends scraper decision, not a Store product.",
+  "isPublic$comment": "Private until a paid platform test passes (the telegram pattern: runs/<date>_paid_test.json). A paid public actor cannot be made private again until monetization is cancelled in Console.",
   "isPublic": false,
-  "defaultRunOptions$comment": "256 MB: the probe sends one request at a time and waits on the network, so more memory buys nothing. 900 s covers the default battery (30 keywords, about 70 Google requests at 1.5 s plus 429 backoffs); the run stops starting keywords 45 s before the timeout and still writes OUTPUT.",
+  "defaultRunOptions$comment": "256 MB: the probe peaked under 75 MB and the run waits on Google (1.5 s between requests), not on the CPU. 3600 s: a full keyword is 4 requests, about 8 a minute per session; with more than 8 keywords the run adds up to 5 proxy sessions (6 in all), roughly 45 full keywords a minute, so about 2,500 in an hour (estimate from the pacing, to be measured in the cost test). The run stops starting keywords 60 s before the timeout and still writes OUTPUT.",
   "defaultRunOptions": {
     "build": "latest",
     "memoryMbytes": 256,
-    "timeoutSecs": 900
+    "timeoutSecs": 3600
   }
 }
