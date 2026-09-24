@@ -1,0 +1,67 @@
+{
+    "actorSpecification": 1,
+    "name": "google-trends-probe",
+    "title": "Google Trends Probe",
+    "description": "Private research actor. Replays the Google Trends explore flow (cookie warmup, explore, multiline, related queries, regions) plus the trending RSS and autocomplete, and records status, latency, 429s and exit IP for every request, by HTTP client and proxy.",
+    "version": "0.1",
+    "buildTag": "latest",
+    "categories": [
+        "DEVELOPER_TOOLS"
+    ],
+    "input": "./INPUT_SCHEMA.json",
+    "dockerfile": "../Dockerfile",
+    "readme": "../README.md",
+    "minMemoryMbytes": 128,
+    "maxMemoryMbytes": 1024,
+    "storages": {
+        "dataset": {
+            "actorSpecification": 1,
+            "title": "Requests",
+            "description": "One row per HTTP request, in the order sent. The run summary is the OUTPUT record of the key-value store.",
+            "views": {
+                "overview": {
+                    "title": "Requests",
+                    "transformation": {
+                        "fields": [
+                            "seq",
+                            "elapsedSecs",
+                            "endpoint",
+                            "keyword",
+                            "attempt",
+                            "status",
+                            "ok",
+                            "throttled",
+                            "count",
+                            "latencyMs",
+                            "bytes",
+                            "sessionNo",
+                            "exitIp",
+                            "error",
+                            "snippet"
+                        ]
+                    },
+                    "display": {
+                        "component": "table",
+                        "properties": {
+                            "seq": { "label": "#", "format": "number" },
+                            "elapsedSecs": { "label": "At (s)", "format": "number" },
+                            "endpoint": { "label": "Endpoint", "format": "text" },
+                            "keyword": { "label": "Keyword", "format": "text" },
+                            "attempt": { "label": "Attempt", "format": "number" },
+                            "status": { "label": "HTTP", "format": "number" },
+                            "ok": { "label": "OK", "format": "boolean" },
+                            "throttled": { "label": "Throttled", "format": "boolean" },
+                            "count": { "label": "Points / items", "format": "number" },
+                            "latencyMs": { "label": "Latency (ms)", "format": "number" },
+                            "bytes": { "label": "Bytes", "format": "number" },
+                            "sessionNo": { "label": "Session", "format": "number" },
+                            "exitIp": { "label": "Exit IP", "format": "text" },
+                            "error": { "label": "Error", "format": "text" },
+                            "snippet": { "label": "Body start", "format": "text" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

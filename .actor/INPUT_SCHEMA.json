@@ -1,0 +1,168 @@
+{
+  "title": "Google Trends Probe",
+  "description": "Measures how Google Trends answers from where this run exits: every request becomes one dataset row (endpoint, status, latency, bytes, exit IP) and the OUTPUT record sums it up. Leave everything empty to run the default battery: curl_cffi as Chrome, no proxy, 30 keywords, 1.5 s between Google requests.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "client": {
+      "title": "HTTP client",
+      "type": "string",
+      "description": "curl_cffi sends Chrome's TLS and HTTP/2 fingerprint. httpx sends Python's TLS fingerprint over HTTP/1.1 with a Chrome User-Agent, like a plain scraper.",
+      "editor": "select",
+      "enum": [
+        "curl_cffi",
+        "httpx"
+      ],
+      "enumTitles": [
+        "curl_cffi (Chrome TLS impersonation)",
+        "httpx (plain Python)"
+      ],
+      "default": "curl_cffi",
+      "sectionCaption": "Client and proxy"
+    },
+    "impersonate": {
+      "title": "curl_cffi browser",
+      "type": "string",
+      "description": "curl_cffi impersonation target, such as chrome (the newest Chrome curl_cffi knows) or chrome146. Ignored by httpx.",
+      "editor": "textfield",
+      "default": "chrome"
+    },
+    "proxyConfiguration": {
+      "title": "Proxy",
+      "type": "object",
+      "description": "No proxy by default, so traffic exits from the Apify server itself. Pick a datacenter or residential group to compare; a group the account cannot use ends the run with the refusal in OUTPUT.",
+      "editor": "proxy",
+      "default": {
+        "useApifyProxy": false
+      }
+    },
+    "keywords": {
+      "title": "Keywords",
+      "type": "array",
+      "description": "One explore flow per keyword, in order. Empty uses 30 varied real searches.",
+      "editor": "stringList",
+      "default": [
+        "bitcoin",
+        "taylor swift",
+        "chatgpt",
+        "weather",
+        "iphone 17",
+        "world cup",
+        "python",
+        "tesla",
+        "recipe",
+        "nba",
+        "ozempic",
+        "netflix",
+        "amazon",
+        "cricket",
+        "election",
+        "minecraft",
+        "flights",
+        "yoga",
+        "gold price",
+        "mortgage rates",
+        "air fryer",
+        "anime",
+        "stock market",
+        "ramen",
+        "electric car",
+        "hurricane",
+        "black friday",
+        "coffee",
+        "diwali",
+        "fußball"
+      ],
+      "sectionCaption": "What to ask"
+    },
+    "geo": {
+      "title": "Country",
+      "type": "string",
+      "description": "Two-letter country code for explore, such as US. Empty means worldwide. The trending RSS uses US when this is empty.",
+      "editor": "textfield",
+      "default": ""
+    },
+    "timeframe": {
+      "title": "Time range",
+      "type": "string",
+      "description": "Google Trends time parameter, such as today 12-m (53 weekly points), today 3-m, now 7-d or 2024-01-01 2024-12-31.",
+      "editor": "textfield",
+      "default": "today 12-m"
+    },
+    "includeRelated": {
+      "title": "Also fetch related queries and region breakdown",
+      "type": "boolean",
+      "description": "Adds widgetdata/relatedsearches and widgetdata/comparedgeo after each successful multiline, two more Google requests per keyword.",
+      "default": false
+    },
+    "warmup": {
+      "title": "Cookie warmup per session",
+      "type": "string",
+      "description": "What each session fetches first for the NID cookie. home: https://trends.google.com/trends/, as a browser does (about 690 KB). rss: the trending RSS, which also sets NID (about 21 KB, 33x less residential traffic). none: no warmup, to test whether explore needs the cookie at all.",
+      "editor": "select",
+      "enum": [
+        "home",
+        "rss",
+        "none"
+      ],
+      "enumTitles": [
+        "home (the Trends home page)",
+        "rss (trending RSS, light)",
+        "none (no cookie)"
+      ],
+      "default": "home"
+    },
+    "delayMs": {
+      "title": "Gap between Google requests (ms)",
+      "type": "integer",
+      "description": "Time from the end of one Google request to the start of the next. Requests are never sent in parallel.",
+      "editor": "number",
+      "minimum": 0,
+      "maximum": 60000,
+      "default": 1500,
+      "sectionCaption": "Pacing and retries"
+    },
+    "newSessionEvery": {
+      "title": "New session every N keywords",
+      "type": "integer",
+      "description": "Fresh cookie jar, new warmup and, behind a proxy, a new proxy session (new exit IP) every N keywords. 0 keeps one session for the whole run.",
+      "editor": "number",
+      "minimum": 0,
+      "maximum": 1000,
+      "default": 10
+    },
+    "retry429": {
+      "title": "Retries after a 429",
+      "type": "integer",
+      "description": "How many times to retry a keyword's explore and multiline flow after HTTP 429 or a redirect to google.com/sorry. 0 records the 429 and moves on.",
+      "editor": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 2
+    },
+    "retryBackoffSecs": {
+      "title": "First backoff after a 429 (s)",
+      "type": "integer",
+      "description": "Wait before the first retry; it doubles for each further retry, capped at 120 s.",
+      "editor": "number",
+      "minimum": 0,
+      "maximum": 300,
+      "default": 10
+    },
+    "rotateOn429": {
+      "title": "New session before each retry",
+      "type": "boolean",
+      "description": "On: a 429 retry starts a new session (new cookies and, behind a proxy, a new exit IP). Off: it retries on the same session.",
+      "default": true
+    },
+    "maxGoogleRequests": {
+      "title": "Max Google requests",
+      "type": "integer",
+      "description": "Hard cap on requests to Google in one run, retries and warmups included. IP lookups do not count.",
+      "editor": "number",
+      "minimum": 1,
+      "maximum": 5000,
+      "default": 300
+    }
+  }
+}

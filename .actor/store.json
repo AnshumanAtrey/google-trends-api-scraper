@@ -1,0 +1,23 @@
+{
+  "$comment": "Listing fields that apify push never sends, applied by scripts/store-metadata.mjs after every deploy. This actor is a private, unpriced research probe: no pricing block, so the script never touches pricing. seoTitle, seoDescription and exampleRunInput are required by the script even for a private actor.",
+  "seoTitle": "Google Trends Probe - Endpoint Blocking Check",
+  "seoDescription": "Private probe that measures how Google Trends endpoints answer from Apify servers: success rate, 429s, latency and exit IP for every request, by HTTP client and proxy.",
+  "exampleRunInput": {
+    "client": "curl_cffi",
+    "keywords": [
+      "bitcoin",
+      "taylor swift",
+      "weather"
+    ],
+    "delayMs": 1500
+  },
+  "actorPermissionLevel": "LIMITED_PERMISSIONS",
+  "isPublic$comment": "Private on purpose: a measurement tool for the Google Trends scraper decision, not a Store product.",
+  "isPublic": false,
+  "defaultRunOptions$comment": "256 MB: the probe sends one request at a time and waits on the network, so more memory buys nothing. 900 s covers the default battery (30 keywords, about 70 Google requests at 1.5 s plus 429 backoffs); the run stops starting keywords 45 s before the timeout and still writes OUTPUT.",
+  "defaultRunOptions": {
+    "build": "latest",
+    "memoryMbytes": 256,
+    "timeoutSecs": 900
+  }
+}
