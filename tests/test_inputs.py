@@ -56,8 +56,7 @@ class Keywords(unittest.TestCase):
     def test_compare_limits(self):
         with self.assertRaisesRegex(InputError, "2 to 5 keywords.*Google's own limit.*you entered 6"):
             parse({'mode': 'compare', 'searchTerms': list('abcdef')})
-        with self.assertRaisesRegex(InputError, 'you entered 1'):
-            parse({'mode': 'compare', 'searchTerms': ['bitcoin']})
+        self.assertEqual(parse({'mode': 'compare', 'searchTerms': ['bitcoin']}).mode, 'keywords')  # runs, with a note
         self.assertEqual(len(parse({'mode': 'compare', 'searchTerms': list('abcde')}).keywords), 5)
 
     def test_topic_id(self):
@@ -75,7 +74,7 @@ class Geo(unittest.TestCase):
     def test_refused(self):
         with self.assertRaisesRegex(InputError, 'state or city'):
             parse({'searchTerms': ['a'], 'geo': 'US-CA'})
-        with self.assertRaisesRegex(InputError, 'not a Google Trends country code'):
+        with self.assertRaisesRegex(InputError, 'not a country Google Trends knows'):
             parse({'searchTerms': ['a'], 'geo': 'XX'})
 
 
@@ -144,3 +143,45 @@ class Options(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NonTechnicalInput(unittest.TestCase):
+    """What people who are not developers type or paste, and what the run makes of it."""
+
+    def test_country_names_become_codes(self):
+        for typed, code in [('India', 'IN'), ('united states', 'US'), ('USA', 'US'), ('UK', 'GB'),
+                            ('South Korea', 'KR'), ('  germany ', 'DE'), ('Antigua and Barbuda', 'AG')]:
+            self.assertEqual(parse_input({'searchTerms': ['x'], 'geo': typed}).geo, code, typed)
+
+    def test_unknown_country_names_the_fix(self):
+        with self.assertRaisesRegex(InputError, 'name such as India'):
+            parse_input({'searchTerms': ['x'], 'geo': 'Atlantis'})
+
+    def test_commas_split_keywords(self):
+        self.assertEqual(parse_input({'searchTerms': ['bitcoin, ethereum; solana', 'nba']}).keywords,
+                         ['bitcoin', 'ethereum', 'solana', 'nba'])
+
+    def test_a_pasted_trends_link_gives_keywords_country_and_dates(self):
+        cfg = parse_input({'searchTerms': ['https://trends.google.com/trends/explore?date=now%207-d&geo=IN&q=cricket,ipl'],
+                           'timeRange': 'today 12-m', 'geo': ''})
+        self.assertEqual((cfg.keywords, cfg.geo, cfg.time_range), (['cricket', 'ipl'], 'IN', 'now 7-d'))
+        self.assertTrue(any('Google Trends link' in n for n in cfg.notes))
+
+    def test_form_choices_win_over_the_link(self):
+        cfg = parse_input({'searchTerms': ['https://trends.google.com/explore?q=cricket&geo=IN'], 'geo': 'GB'})
+        self.assertEqual(cfg.geo, 'GB')
+
+    def test_compare_with_one_keyword_just_looks_it_up(self):
+        cfg = parse_input({'mode': 'compare', 'searchTerms': ['bitcoin']})
+        self.assertEqual((cfg.mode, cfg.keywords), ('keywords', ['bitcoin']))
+        self.assertTrue(cfg.notes)
+
+    def test_only_a_keyword_uses_sensible_defaults(self):
+        cfg = parse_input({'searchTerms': ['bitcoin']})
+        self.assertEqual((cfg.mode, cfg.geo, cfg.time_range, set(cfg.data_types)),
+                         ('keywords', '', 'today 12-m', {'interestOverTime', 'interestByRegion', 'relatedQueries'}))
+
+    def test_trending_ignores_keywords_with_a_note(self):
+        cfg = parse_input({'mode': 'trending', 'searchTerms': ['bitcoin']})
+        self.assertEqual(cfg.geo, 'US')
+        self.assertTrue(any('does not use keywords' in n for n in cfg.notes))

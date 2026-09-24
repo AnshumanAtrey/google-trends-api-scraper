@@ -8,9 +8,11 @@ with a message that says what to type instead, before a single request goes to G
 """
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 MODES = ('keywords', 'compare', 'trending', 'suggestions')
 TIME_CODES = ('now 1-H', 'now 4-H', 'now 1-d', 'now 7-d', 'today 1-m', 'today 3-m', 'today 12-m', 'today 5-y', 'all')
@@ -26,7 +28,15 @@ TRENDING_CATEGORIES = {
     'hobbies': 8, 'jobs': 9, 'law': 10, 'other': 11, 'pets': 13, 'politics': 14, 'science': 15,
     'shopping': 16, 'sports': 17, 'technology': 18, 'travel': 19, 'climate': 20,
 }
-GEO_ALIASES = {'UK': 'GB', 'WW': '', 'WORLDWIDE': '', 'GLOBAL': '', 'WORLD': ''}
+GEO_ALIASES = {'UK': 'GB', 'WW': '', 'WORLDWIDE': '', 'GLOBAL': '', 'WORLD': '', 'ALL': ''}
+# People type country names, not codes: "India", "united states", "USA", "UK", "South Korea".
+NAME_ALIASES = {'USA': 'US', 'U.S.': 'US', 'U.S.A.': 'US', 'AMERICA': 'US', 'UNITED STATES OF AMERICA': 'US',
+                'ENGLAND': 'GB', 'BRITAIN': 'GB', 'GREAT BRITAIN': 'GB', 'SCOTLAND': 'GB', 'WALES': 'GB',
+                'SOUTH KOREA': 'KR', 'KOREA': 'KR', 'NORTH KOREA': 'KP', 'UAE': 'AE', 'RUSSIA': 'RU',
+                'VIETNAM': 'VN', 'IRAN': 'IR', 'SYRIA': 'SY', 'LAOS': 'LA', 'BOLIVIA': 'BO', 'VENEZUELA': 'VE',
+                'TANZANIA': 'TZ', 'MOLDOVA': 'MD', 'CZECH REPUBLIC': 'CZ', 'HOLLAND': 'NL', 'TURKEY': 'TR'}
+TRENDS_URL = re.compile(r'^https?://(www\.)?trends\.google\.[a-z.]+/', re.I)
+KEYWORD_SPLIT = re.compile(r'[,;]')
 COMPARE_MIN, COMPARE_MAX = 2, 5             # Google's own limit per comparison
 MAX_KEYWORD_CHARS = 100                     # our guard: a longer "keyword" is almost always pasted text
 MAX_NEWS = 10
@@ -54,6 +64,7 @@ class Config:
     trending_category: str = 'all'
     news_per_trend: int = 3
     max_items: int = 0
+    notes: list[str] = field(default_factory=list)          # plain-English changes we made to the input
 
     def wants(self, part: str) -> bool:
         return part in self.data_types
@@ -131,17 +142,32 @@ def parse_keywords(value) -> tuple[list[str], list[tuple[str, str]]]:
     return good, bad
 
 
+def _country_names() -> dict[str, str]:
+    names = {}
+    for code, name in COUNTRIES.items():
+        up = ' '.join(name.upper().split())
+        plain = unicodedata.normalize('NFKD', up.replace('\u2019', "'")).encode('ascii', 'ignore').decode()
+        for variant in (up, plain):            # "Türkiye" and "Turkiye", "Curaçao" and "Curacao"
+            names[variant] = code
+            names[variant.replace(' & ', ' AND ')] = code
+    return {**names, **NAME_ALIASES}
+
+
+COUNTRY_BY_NAME = _country_names()
+
+
 def parse_geo(value, *, default: str = '') -> str:
-    text = str(value or '').strip().upper()
+    text = ' '.join(str(value or '').split()).upper()
     text = GEO_ALIASES.get(text, text)
     if not text:
         return default
+    text = COUNTRY_BY_NAME.get(text, text)
     if '-' in text:
         raise InputError(f'Country (geo) "{value}" looks like a state or city code. Only whole countries are '
                          f'supported: enter a two-letter code such as US, or leave it empty for worldwide.')
     if text not in COUNTRIES:
-        raise InputError(f'Country (geo) "{value}" is not a Google Trends country code. Enter two letters such as '
-                         f'US, GB or IN, or leave it empty for worldwide.')
+        raise InputError(f'Country (geo) "{value}" is not a country Google Trends knows. Pick it from the list, or '
+                         f'enter a name such as India or a two-letter code such as IN; leave it empty for worldwide.')
     return text
 
 
@@ -193,13 +219,49 @@ def parse_data_types(value) -> tuple[str, ...]:
     return tuple(d for d in DATA_TYPES if d in chosen)
 
 
+def expand_terms(value) -> tuple[list, dict, list[str]]:
+    """What people paste into Keywords, turned into one search term per item: "bitcoin, ethereum" is
+    two keywords, and a Google Trends link gives its keywords plus its country, dates, category and
+    search type (used only where the form was left at its default). Returns (terms, hints, notes)."""
+    if isinstance(value, str):
+        value = value.splitlines()
+    if not isinstance(value, list):
+        return value, {}, []
+    terms: list = []
+    hints: dict = {}
+    notes: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            terms.append(item)
+            continue
+        text = item.strip()
+        if TRENDS_URL.match(text):
+            query = parse_qs(urlsplit(text).query)
+            found = [t for q in query.get('q', []) for t in KEYWORD_SPLIT.split(q) if t.strip()]
+            terms += found
+            if not hints:
+                hints = {k: query[k][0] for k in ('geo', 'date', 'cat', 'gprop') if query.get(k)}
+            notes.append(f'Read {len(found)} keyword(s) from the Google Trends link.' if found else
+                         'The Google Trends link has no keywords (no q= part); add keywords instead.')
+            continue
+        parts = [t for t in KEYWORD_SPLIT.split(text) if t.strip()]
+        terms += parts if len(parts) > 1 else [item]
+    return terms, hints, notes
+
+
 def parse_input(raw: dict | None, today: date | None = None) -> Config:
     raw = raw or {}
     if not isinstance(raw, dict):
         raise InputError('The input must be a JSON object, as the input form produces.')
     mode = _choice(raw, 'mode', MODES, 'keywords', label='Report type')
-    cfg = Config(mode=mode)
-    cfg.keywords, cfg.invalid = parse_keywords(raw.get('searchTerms'))
+    terms, hints, notes = expand_terms(raw.get('searchTerms'))
+    cfg = Config(mode=mode, notes=notes)
+    cfg.keywords, cfg.invalid = parse_keywords(terms)
+    if mode == 'compare' and len(cfg.keywords) == 1:
+        mode = cfg.mode = 'keywords'
+        cfg.notes.append('Compare needs 2 to 5 keywords; with one keyword the run looks it up on its own.')
+    if mode == 'trending' and cfg.keywords:
+        cfg.notes.append('The Trending Now list does not use keywords, so they were left out.')
 
     if mode != 'trending':
         if not cfg.keywords:
@@ -216,12 +278,20 @@ def parse_input(raw: dict | None, today: date | None = None) -> Config:
                                 'scale.' if len(cfg.keywords) > COMPARE_MAX else
                                 'Add another keyword, or switch Report type (mode) to keywords.'))
 
-    cfg.geo = parse_geo(raw.get('geo'), default='US' if mode == 'trending' else '')
-    cfg.time_range = parse_time_range(raw.get('timeRange'), today)
+    def from_link(key: str, hint: str, defaults: tuple):
+        if hint in hints and raw.get(key) in defaults:
+            cfg.notes.append(f'Used {key} "{hints[hint]}" from the Google Trends link.')
+            return hints[hint]
+        return raw.get(key)
+
+    cfg.geo = parse_geo(from_link('geo', 'geo', (None, '')), default='US' if mode == 'trending' else '')
+    cfg.time_range = parse_time_range(from_link('timeRange', 'date', (None, '', 'today 12-m')), today)
     cfg.data_types = parse_data_types(raw.get('dataTypes'))
-    cfg.search_property = _choice(raw, 'property', tuple(PROPERTIES), 'web', aliases=PROPERTY_ALIASES,
+    gprop = from_link('property', 'gprop', (None, '', 'web'))
+    cfg.search_property = _choice({'property': gprop}, 'property', tuple(PROPERTIES), 'web', aliases=PROPERTY_ALIASES,
                                   label='Search type')
-    cfg.category = _int(raw, 'category', 0, 0, None, 'Subject area')
+    cfg.category = _int({'category': from_link('category', 'cat', (None, '', 0, '0'))}, 'category', 0, 0, None,
+                        'Subject area')
     cfg.region_level = _choice(raw, 'regionLevel', tuple(REGION_LEVELS), 'auto', label='Region detail')
 
     hours = raw.get('trendingHours')

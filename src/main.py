@@ -513,6 +513,7 @@ class Run:
         d = self.delivery
         return {
             'status': status,
+            'notes': self.cfg.notes,
             'message': self.message(status != 'running'),
             'mode': self.cfg.mode,
             'stopReason': self.stop,
@@ -578,6 +579,8 @@ async def main() -> None:
                        f'category={cfg.category} payPerEvent={delivery.ppe} maxTotalChargeUsd={delivery.max_usd}')
         for kw, why in cfg.invalid:
             Actor.log.warning(f'Skipped "{kw}": {why}')
+        for note in cfg.notes:
+            Actor.log.warning(note)
         run = Run(cfg, delivery)
         await run.execute()
         message = run.message(True)

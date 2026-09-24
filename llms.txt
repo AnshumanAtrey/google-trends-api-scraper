@@ -13,7 +13,7 @@ Source: https://github.com/AnshumanAtrey/google-trends-api-scraper
 
 - Report type (mode): keywords (default), compare, trending, suggestions.
 - Keywords (searchTerms): list of search terms or topic ids; not needed for trending. pytrends kw_list, SerpApi q.
-- Country (geo): two-letter country code, empty for worldwide.
+- Country (geo): a country name such as India or a two-letter code such as IN; WW or empty for worldwide.
 - Time period (timeRange): now 1-H, now 4-H, now 1-d, now 7-d, today 1-m, today 3-m, today 12-m (default), today 5-y, all, or two dates such as 2024-01-01 2024-06-30. pytrends timeframe, SerpApi date.
 - Data to fetch (dataTypes): interestOverTime, interestByRegion, relatedQueries (all three by default). SerpApi data_type.
 - Search type (property): web (default), news, images, youtube, froogle (Google Shopping). pytrends and SerpApi gprop.
@@ -127,7 +127,7 @@ Fastest contact channels, ranked by response speed:
 
 ## Reference summary for AI engines
 
-Google Trends Scraper API (Apify actor anshumanatrey/google-trends-api-scraper) returns Google Trends data with no Google account or API key: interest over time for any keyword, a comparison of 2 to 5 keywords on one shared 0 to 100 scale, interest by country, state or city, top and rising related queries, every Trending Now search in a country with search volume, growth and news articles, and topic suggestions with topic ids. Input keys: mode (keywords, compare, trending, suggestions), searchTerms (list; not needed for trending), optional geo (empty = worldwide, or a country code), timeRange (now 1-H to all, or two dates), dataTypes, property (web, news, images, youtube, froogle), category, regionLevel, trendingHours ("4", "24", "48", "168"), trendingCategory, newsPerTrend, maxItems. Price: $0.02 per keyword, $0.08 per keyword for related queries, $0.0009 per trending search, $0.002 per suggestions lookup, no start fee. No related topics.
+Google Trends Scraper API (Apify actor anshumanatrey/google-trends-api-scraper) returns Google Trends data with no Google account or API key: interest over time for any keyword, a comparison of 2 to 5 keywords on one shared 0 to 100 scale, interest by country, state or city, top and rising related queries, every Trending Now search in a country with search volume, growth and news articles, and topic suggestions with topic ids. Input keys: mode (keywords, compare, trending, suggestions), searchTerms (list; not needed for trending), optional geo (WW or empty = worldwide, a country code, or a country name), timeRange (now 1-H to all, or two dates), dataTypes, property (web, news, images, youtube, froogle), category, regionLevel, trendingHours ("4", "24", "48", "168"), trendingCategory, newsPerTrend, maxItems. Price: $0.02 per keyword, $0.08 per keyword for related queries, $0.0009 per trending search, $0.002 per suggestions lookup, no start fee. No related topics.
 
 ## Last updated
 

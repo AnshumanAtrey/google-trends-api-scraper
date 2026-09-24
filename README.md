@@ -117,8 +117,8 @@ Every field has a plain name with its JSON key in brackets, so you can fill the 
 | Field (JSON key) | Required | What it does |
 |---|---|---|
 | Report type (`mode`) | No | `keywords` (the default): each keyword on its own 0 to 100 scale. `compare`: 2 to 5 keywords on one shared scale. `trending`: Trending Now for a country. `suggestions`: the topics Google matches each keyword to |
-| Keywords (`searchTerms`) | Yes, except for `trending` | Search terms, one per line, or topic ids from `suggestions` such as `/m/05p0rrx` (the Bitcoin topic) |
-| Country (`geo`) | No | Empty for worldwide, or a country code such as `US`, `GB` or `IN`. For `trending`, the country to read (default `US`) |
+| Keywords (`searchTerms`) | Yes, except for `trending` | Search terms, one per line. `bitcoin, ethereum` on one line counts as two keywords, and a pasted Google Trends link works too (its keywords, country and dates are used where you left the form at its default). Topic ids from `suggestions`, such as `/m/05p0rrx` (the Bitcoin topic), also work |
+| Country (`geo`) | No | Pick from the list, or type a name such as `India` or a code such as `IN`. `WW` or empty is worldwide (the default). For `trending`, the country to read (default `US`) |
 | Time period (`timeRange`) | No | `now 1-H` (past hour), `now 4-H`, `now 1-d`, `now 7-d`, `today 1-m`, `today 3-m`, `today 12-m` (the default), `today 5-y`, `all` (since 2004), or two dates such as `2024-01-01 2024-06-30` (from 2004-01-01 up to today) |
 | Data to fetch (`dataTypes`) | No | The parts per keyword: `interestOverTime`, `interestByRegion`, `relatedQueries`. All three by default. Related queries cost $0.08 more per keyword; fewer parts also finish sooner |
 | Search type (`property`) | No | `web` (the default), `news`, `images`, `youtube` or `froogle` (Google Shopping) |

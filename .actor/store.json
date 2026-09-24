@@ -21,5 +21,41 @@
     "build": "latest",
     "memoryMbytes": 256,
     "timeoutSecs": 3600
+  },
+  "pricing": {
+    "apply": true,
+    "$comment": "CONFIRMED by the owner 2026-09-24 (\"good enough price\"). MEASURED v1 cost on Apify (builds 1.0.1-1.0.2, 256 MB, 14 runs, costtest): full keyword $0.00004-0.00012, keyword without related queries $0.00004-0.00006, trend $0.000006, suggestions lookup $0.00006-0.00008, so every event keeps 25x-2,000x over cost after Apify's 20%. RULE (owner): a little below the main competitor on each job, extreme margin; target $1,000 a month. MAIN COMPETITOR: apify/google-trends-scraper, 1,519 users in 30 days (next: data_xplorer 510, agenscrape 277). MEASURED on our account 2026-09-24 with apify's default input at its default 4,096 MB: 1 keyword (bitcoin, US, 12 months) took 300.7 s and billed $0.1077 of platform usage + $0.003 for the result = $0.111 (run Wsjyg51mE7OXfXwOR); its row also held related topics (18 top, 9 rising) and 200 cities, which we do not return. 10 keywords in one run hit the 900 s limit our test set, saved 3 keywords and billed $0.709 + $0.009 = $0.718, i.e. $0.24 per saved keyword (run abuI6GZ4QJjbmQ8qb; apify's own default timeout is 604,800 s). ANCHORS (live pricingInfos 2026-09-24, free plan, competitors.pricing-2026-09-24.json): data_xplorer $0.02 start + $0.002 per result, one keyword per run, no related queries = $0.022 per keyword (GOLD tier $0.0205); agenscrape $0.025 start per GB (4 GB = $0.10) + $0.025 per result = $0.125 for 1 keyword but $0.035 per keyword in a 10-keyword run; automation-lab $0.005 + $0.138 = $0.143; khadinakbar $0.005 per data point, about $0.77 + platform usage; scrapesage $0.004 for everything (63 users). Trending Now: data_xplorer $0.001 per row + $0.02 start (220 US trends = $0.24), scrapesage $0.0015, vnx0 $0.0012 (RSS, 10 a day), automation-lab $0.00115 + $0.005. PRICES: KEYWORD $0.02 (interest over time + regions) = 9% below data_xplorer's $0.022 for the same job. RELATED-QUERIES +$0.08, so a full keyword is $0.10 = 10% below apify's measured $0.111, 20% below agenscrape's 1-keyword $0.125 and 30% below automation-lab's $0.143. TREND $0.0009 = 10% below data_xplorer's $0.001 row with no start fee (220 US trends $0.198 vs $0.24). SUGGESTIONS $0.002 = half of scrapesage's $0.004 record, the only competitor offering suggestions, which also carries its full keyword analysis. WHERE WE ARE NOT CHEAPER (stated in the README): scrapesage ($0.004 all-in) at every size; agenscrape ($0.35) and data_xplorer without related queries ($0.22) for 10 keywords. Bet: users pick on ranking and trust, not the lowest price (apify has 1,519 users at about $0.11 all-in; scrapesage 63 at $0.004). COST (measured, probe on Apify, 256 MB, 2026-09-24, matrix/*.json): interest over time $0.054 to $0.127 per 1,000 keywords; full keyword estimated $0.10 to $0.30 per 1,000 incl. residential fallback, plus dataset rows $0.005 per 1,000 and OUTPUT writes throttled to one per 10 s; worst case $0.0004 per keyword. MARGIN: developer share 0.8 x price (apifyMarginPercentage 0.2): full keyword $0.08 vs at most $0.0004 cost (200x), keyword alone $0.016 (40x), trend $0.00072 vs about $0.000005. REVENUE: only paid-plan users count toward profit (docs monetize/pricing-and-costs.md), so $1,000 a month needs about 12,600 full keywords (or 63,700 keywords without related queries, or 1.4 million trends) from paid-plan users; the old $0.003 draft needed 500,000 keywords. Scale check: data_xplorer ran 26,514 runs in 30 days, one keyword each. Price alone does not reach $1,000: Store rank does (SEO.md). HEADER: the Store shows 'from $20.00 / 1,000 keywords' (primary event, lowest tier; start fees never shown); apify's header shows 'from $0.30 / 1,000 results' because its platform usage is billed separately. FLAT, NO TIERS: free-plan users pay nothing, so tier discounts only cut paid revenue; competitors' all-in prices barely move on paid tiers (apify's platform usage stays, data_xplorer's start fee is flat); a decrease takes effect at once, so tiers can be added later without notice, while a raise needs 14 days and is once a month. EVENTS: all four defined now, since a new paid event later needs 14 days' notice. No start fee. Keywords with no data or still throttled after one retry are not charged; related-queries is charged only when Google returned at least one related query. Do not add apify-default-dataset-item (it would charge every row twice). Event names must match the constants in src/main.py. Flat prices also avoid the telegram note that SDK 3.4.1 rejects a tiered event record without eventPriceUsd.",
+    "pricingInfos": [
+      {
+        "pricingModel": "PAY_PER_EVENT",
+        "apifyMarginPercentage": 0.2,
+        "reasonForChange": "First pricing for 1.0. Keyword $0.02, below data_xplorer's $0.022; related queries +$0.08, so a full keyword is $0.10, below apify's measured $0.111; trending search $0.0009, below $0.001 + start fee; suggestions $0.002. No start fee.",
+        "pricingPerEvent": {
+          "actorChargeEvents": {
+            "keyword": {
+              "eventTitle": "Keyword",
+              "eventDescription": "One keyword row: Google's interest over time and interest by region, whichever you ask for. In a comparison each keyword counts once. A keyword Google has no data for is not charged. No start fee.",
+              "eventPriceUsd": 0.02,
+              "isPrimaryEvent": true
+            },
+            "related-queries": {
+              "eventTitle": "Related queries",
+              "eventDescription": "Top and rising related queries for one keyword, charged only when Google returns at least one. With the keyword event, $0.10 per keyword in total.",
+              "eventPriceUsd": 0.08
+            },
+            "trend": {
+              "eventTitle": "Trending search",
+              "eventDescription": "One Trending Now row: the search, its volume and growth, start and end time, topics, the searches grouped under it and its news articles.",
+              "eventPriceUsd": 0.0009
+            },
+            "suggestions": {
+              "eventTitle": "Suggestions lookup",
+              "eventDescription": "One keyword looked up for suggestions: the topics Google matches it to, each with its topic id.",
+              "eventPriceUsd": 0.002
+            }
+          }
+        }
+      }
+    ]
   }
 }
