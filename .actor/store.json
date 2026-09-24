@@ -1,7 +1,9 @@
 {
   "$comment": "Listing fields that apify push never sends, applied by scripts/store-metadata.mjs after every deploy. This actor is a private, unpriced research probe: no pricing block, so the script never touches pricing. seoTitle, seoDescription and exampleRunInput are required by the script even for a private actor.",
-  "seoTitle": "Google Trends Probe - Endpoint Blocking Check",
-  "seoDescription": "Private probe that measures how Google Trends endpoints answer from Apify servers: success rate, 429s, latency and exit IP for every request, by HTTP client and proxy.",
+  "actorId$comment": "The actor is pinned by ID: CI pushes to this ID (actor-id input of apify/push-actor-action) and store-metadata.mjs looks it up by ID, so renaming `name` in actor.json renames the SAME actor (logo, runs and history stay) instead of creating a new one.",
+  "actorId": "HSTOlg2W6dmefYbne",
+  "seoTitle": "Google Trends Scraper API: Interest and Trending Now",
+  "seoDescription": "Scrape Google Trends with no API key: interest over time, related queries, regions, 5-keyword compare and every Trending Now search. Pytrends alternative.",
   "exampleRunInput": {
     "client": "curl_cffi",
     "keywords": [

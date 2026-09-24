@@ -32,11 +32,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The actor is pinned by ID (.actor/store.json actorId), so a rename of
+      # actor.json "name" updates the same actor instead of creating a new one.
+      - name: Read actor ID
+        id: meta
+        run: echo "actor_id=$(node -p "require('./.actor/store.json').actorId || ''")" >> "$GITHUB_OUTPUT"
+
       - name: Push Actor to Apify
         id: push
         uses: apify/push-actor-action@v1
         with:
           token: ${{ secrets.APIFY_TOKEN }}
+          actor-id: ${{ steps.meta.outputs.actor_id }}
 
       - name: Report build
         run: |

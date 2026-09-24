@@ -49,7 +49,11 @@ const LIMITS = { title: 63, description: 300, seoTitle: 60, seoDescription: 200 
 const BANNED_CHARS = /[—–]/;                       // em dash, en dash
 const BANNED_WORDS = /\b(leverage|robust|seamlessly|effortlessly|cutting-edge|streamline|empower|unleash)\b/i;
 
+const SLUG = /^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9])$/;
 const desired = {
+  // name is only managed when the actor is pinned by ID (store.actorId); then a new
+  // name in actor.json renames the same actor instead of creating another one.
+  name: store.actorId ? actor.name : undefined,
   title: actor.title,
   description: actor.description,
   categories: actor.categories || [],
@@ -76,12 +80,13 @@ for (const k of ['title', 'description', 'seoTitle', 'seoDescription']) {
   if (BANNED_CHARS.test(v)) problems.push(`${k} contains an em/en dash - use "-" or "|"`);
   const w = v.match(BANNED_WORDS); if (w) problems.push(`${k} uses banned word "${w[0]}"`);
 }
+if (desired.name !== undefined && (!SLUG.test(desired.name) || desired.name.length < 3 || desired.name.length > 63)) problems.push(`name "${desired.name}" is not a valid slug (3-63 chars, letters, digits, hyphens)`);
 if (desired.categories.length > 3) problems.push(`categories has ${desired.categories.length} entries, limit 3`);
 if (problems.length) { console.error('Listing rules violated:\n  - ' + problems.join('\n  - ')); process.exit(1); }
 
 /* ------------------------------------------------------------ diff + apply -- */
 const me = await api('GET', '/users/me');
-const actorId = `${me.username}~${actor.name}`;
+const actorId = store.actorId || `${me.username}~${actor.name}`;
 const live = await api('GET', `/acts/${actorId}`);
 
 const changes = {};
