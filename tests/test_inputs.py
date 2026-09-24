@@ -167,6 +167,10 @@ class NonTechnicalInput(unittest.TestCase):
         self.assertEqual((cfg.keywords, cfg.geo, cfg.time_range), (['cricket', 'ipl'], 'IN', 'now 7-d'))
         self.assertTrue(any('Google Trends link' in n for n in cfg.notes))
 
+    def test_the_form_default_country_does_not_hide_the_links_country(self):
+        cfg = parse_input({'searchTerms': ['https://trends.google.com/explore?q=tea&geo=GB'], 'geo': 'WW'})
+        self.assertEqual(cfg.geo, 'GB')   # the platform fills geo with its default WW when the user leaves it
+
     def test_form_choices_win_over_the_link(self):
         cfg = parse_input({'searchTerms': ['https://trends.google.com/explore?q=cricket&geo=IN'], 'geo': 'GB'})
         self.assertEqual(cfg.geo, 'GB')

@@ -284,7 +284,7 @@ def parse_input(raw: dict | None, today: date | None = None) -> Config:
             return hints[hint]
         return raw.get(key)
 
-    cfg.geo = parse_geo(from_link('geo', 'geo', (None, '')), default='US' if mode == 'trending' else '')
+    cfg.geo = parse_geo(from_link('geo', 'geo', (None, '', 'WW', 'ww')), default='US' if mode == 'trending' else '')  # WW: form default
     cfg.time_range = parse_time_range(from_link('timeRange', 'date', (None, '', 'today 12-m')), today)
     cfg.data_types = parse_data_types(raw.get('dataTypes'))
     gprop = from_link('property', 'gprop', (None, '', 'web'))
