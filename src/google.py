@@ -12,8 +12,11 @@ What real requests showed (2026-09-24, from a home IP and from Apify) and how th
 - One IP gets its first 429 at about 55-60 requests a minute. Requests in a session are spaced
   at least 1.5 s apart (end of one to start of the next), about 33 a minute.
 - A 429 carries no Retry-After. Policy: wait 5 s and retry once in the same session. Throttled
-  again, the keyword starts over in a fresh session (a new IP on a proxy lane, a new cookie jar
-  on the direct lane), at most twice; parts already fetched are kept. A redirect to Google's
+  again, the keyword starts over in a fresh session, at most twice; parts already fetched are kept.
+  A fresh session always means a new IP: Google blocks the IP (on Apify it answered 302 to
+  google.com/sorry for every new cookie jar on a flagged AWS IP, 2026-09-24), so the first
+  rotation moves the direct lane to the Apify datacenter proxy and the last one goes to the
+  residential proxy when the account has it. A lane that escalated stays on its proxy. A redirect to Google's
   block page (google.com/sorry), network errors and 5xx answers are treated the same way.
   Other answers (400, 401, 404) are not retried.
 - tz is required (400 without it); tz=0 keeps Google's formatted strings in UTC. Bucket times
@@ -114,9 +117,12 @@ class Lane:
     """One worker's connection to Google: one session at a time (cookie jar + exit IP)."""
 
     def __init__(self, index: int, proxy_cfg, tag: str, warmup_geo: str, counters: Counters,
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None, escalate=None):
         self.index = index
         self.proxy_cfg = proxy_cfg
+        self.is_direct = proxy_cfg is None           # lane 0: the last resort, never hands work back
+        self.tier = 'direct' if proxy_cfg is None else 'datacenter'
+        self.escalate = escalate                     # async tier -> proxy configuration or None
         self.tag = tag
         self.warmup_geo = warmup_geo
         self.counters = counters
@@ -132,7 +138,7 @@ class Lane:
 
     @property
     def label(self) -> str:
-        return 'direct lane' if self.proxy_cfg is None else f'proxy lane {self.index}'
+        return 'direct lane' if self.tier == 'direct' else f'lane {self.index} ({self.tier} proxy)'
 
     def scrub(self, text: str) -> str:
         text = USERINFO.sub('://***@', text)
@@ -158,9 +164,24 @@ class Lane:
         except (Throttled, GoogleError) as exc:
             Actor.log.warning(f'{self.label}: warmup failed ({exc}); explore will pick up the cookie itself.')
 
-    async def rotate(self, problem: str) -> None:
-        how = 'a new IP' if self.proxy_cfg is not None else 'a new cookie jar (same IP, no proxy)'
-        Actor.log.warning(f'{self.label}: {problem} after the retry; starting session {self.sessions + 1} with {how}.')
+    async def rotate(self, problem: str, rotation: int = 1) -> None:
+        """A fresh session on a new IP. Rotation 1 moves a direct lane to the datacenter proxy;
+        the last rotation goes to the residential proxy. A tier the account lacks is skipped."""
+        was = self.label
+        if self.escalate is not None:
+            wants = ['residential'] if rotation >= MAX_ROTATIONS else []
+            if self.tier == 'direct':
+                wants.append('datacenter')
+            for tier in wants:
+                if tier == self.tier:
+                    break
+                cfg = await self.escalate(tier)
+                if cfg is not None:
+                    self.proxy_cfg, self.tier = cfg, tier
+                    break
+        how = 'a new cookie jar (same IP, no proxy available)' if self.tier == 'direct' else \
+            f'a new IP on the {self.tier} proxy'
+        Actor.log.warning(f'{was}: {problem} after the retry; starting session {self.sessions + 1} with {how}.')
         await self.open()
 
     async def close(self) -> None:
@@ -231,7 +252,7 @@ async def with_rotation(lane: Lane, attempt, may_rotate) -> object:
         except Throttled as exc:
             if rnd == MAX_ROTATIONS or not may_rotate():
                 raise
-            await lane.rotate(str(exc))
+            await lane.rotate(str(exc), rnd + 1)
     raise AssertionError('unreachable')
 
 

@@ -361,7 +361,7 @@ Because the endpoints this actor uses sent an empty list of related topics in al
 
 ### Why do other tools get "429 Too Many Requests", and does this actor handle it?
 
-Yes, this actor handles it. 429 is Google's throttle page. Google sends it when a request has no Google cookie or one address asks too fast. The actor gets the cookie first and spaces the requests of each session 1.5 seconds apart. After a 429 it waits 5 seconds and retries once in the same session; if Google throttles again, the keyword starts over in a fresh session (a new IP on the proxy sessions), up to two times, keeping the parts it already has. In the 2026-09-24 test on Apify one retry recovered both 429s in 8 runs (one of them from a test that skipped the cookie on purpose), and all 115 keywords came back. A keyword that still fails costs nothing.
+Yes, this actor handles it. 429 is Google's throttle page. Google sends it when a request has no Google cookie or one address asks too fast. The actor gets the cookie first and spaces the requests of each session 1.5 seconds apart. After a 429 it waits 5 seconds and retries once in the same session; if Google throttles again, the keyword starts over in a fresh session on a new IP, up to two times, keeping the parts it already has: first on Apify's datacenter proxy, and the last try on Apify's residential proxy. A new cookie jar alone does not help, because Google blocks the address, not the cookie. In the 2026-09-24 test on Apify one retry recovered both 429s in 8 runs (one of them from a test that skipped the cookie on purpose), and all 115 keywords came back. A keyword that still fails costs nothing.
 
 ### Why was a keyword skipped?
 

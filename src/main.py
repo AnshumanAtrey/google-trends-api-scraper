@@ -174,6 +174,7 @@ class Run:
         self.tag = secrets.token_hex(3)
         self.counters = google.Counters()
         self.lanes: list[google.Lane] = []
+        self.proxy_cfgs: dict = {}
         self.stop: str | None = None
         self.trending: dict | None = None
         self.last_output = 0.0
@@ -203,21 +204,28 @@ class Run:
     # ---------------------------------------------------------------- lanes --
     async def open_lanes(self, units: int) -> None:
         warm = self.cfg.geo or 'US'
-        self.lanes = [google.Lane(0, None, self.tag, warm, self.counters, self.transport)]
+        self.lanes = [google.Lane(0, None, self.tag, warm, self.counters, self.transport, self.proxy_for)]
         extra = proxy_lane_count(units)
         if not extra:
             return
-        try:
-            proxy_cfg = await Actor.create_proxy_configuration()
-        except Exception as exc:  # noqa: BLE001  a missing proxy means one lane, not a failed run
-            Actor.log.warning(f'Apify Proxy is not available ({type(exc).__name__}: {str(exc)[:200]}); '
-                              f'all keywords run on the direct lane.')
-            return
+        proxy_cfg = await self.proxy_for('datacenter')
         if proxy_cfg is None:
             return
-        self.lanes += [google.Lane(i, proxy_cfg, self.tag, warm, self.counters, self.transport)
+        self.lanes += [google.Lane(i, proxy_cfg, self.tag, warm, self.counters, self.transport, self.proxy_for)
                        for i in range(1, extra + 1)]
         Actor.log.info(f'{units} keywords: {len(self.lanes)} lanes (direct + {extra} on Apify datacenter proxy).')
+
+    async def proxy_for(self, tier: str):
+        """The Apify proxy configuration for a tier ('datacenter' or 'residential'), created once;
+        None when the account or plan does not have it (then that tier is simply skipped)."""
+        if tier not in self.proxy_cfgs:
+            try:
+                self.proxy_cfgs[tier] = await (Actor.create_proxy_configuration(groups=['RESIDENTIAL'])
+                                               if tier == 'residential' else Actor.create_proxy_configuration())
+            except Exception as exc:  # noqa: BLE001  a missing proxy tier means fewer options, not a failed run
+                Actor.log.warning(f'Apify {tier} proxy is not available ({type(exc).__name__}: {str(exc)[:200]}).')
+                self.proxy_cfgs[tier] = None
+        return self.proxy_cfgs[tier]
 
     async def close_lanes(self) -> None:
         for lane in self.lanes:
@@ -270,7 +278,7 @@ class Run:
     def hand_back(self, lane: google.Lane, entries: list[dict], problem: str) -> bool:
         """True when a proxy lane got nothing but throttles for a unit: the lane retires and the unit
         goes back to the queue for the other lanes and, in the end, the direct lane."""
-        if lane.proxy_cfg is None:
+        if lane.is_direct:
             return False
         lane.retired = True
         for e in entries:
@@ -517,7 +525,7 @@ class Run:
             'throttledRequests': self.counters.throttled,
             'failedRequests': self.counters.failed,
             'elapsedSecs': self.elapsed(),
-            'lanes': [{'lane': ln.index, 'proxy': ln.proxy_cfg is not None, 'sessions': ln.sessions,
+            'lanes': [{'lane': ln.index, 'proxy': ln.proxy_cfg is not None, 'tier': ln.tier, 'sessions': ln.sessions,
                        'requests': ln.requests, 'units': ln.units, 'retired': ln.retired} for ln in self.lanes],
             'keywords': self.entries,
         }

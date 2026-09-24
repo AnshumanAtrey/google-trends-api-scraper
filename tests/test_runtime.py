@@ -277,6 +277,55 @@ class ThrottlePolicy(Base):
         self.assertIsNone(got.throttled)
         self.assertEqual(lane.counters.throttled, 1)
 
+    # A flagged IP answers every new cookie jar with a 302 to google.com/sorry (compare5 on Apify,
+    # 2026-09-24: 0 of 5 keywords), so a fresh session must mean a new IP.
+    def escalating_lane(self, routes: dict, tiers=('datacenter', 'residential')):
+        lane = self.lane(routes)
+        self.asked: list[str] = []
+        proxies = {t: FakeProxy() for t in tiers}
+
+        async def escalate(tier):
+            self.asked.append(tier)
+            return proxies.get(tier)
+        lane.escalate = escalate
+        return lane
+
+    async def test_blocked_direct_lane_moves_to_the_datacenter_proxy(self):
+        sorry = httpx.Response(302, headers={'location': 'https://www.google.com/sorry/index?continue=x'})
+        lane = self.escalating_lane({'/trends/api/explore': [sorry, sorry, 'explore_bitcoin_12m.txt']})
+        got = await google.fetch_explore(lane, ['bitcoin'], parse_input({'searchTerms': ['bitcoin']}), lambda: True)
+        self.assertIsNone(got.throttled)
+        self.assertEqual((lane.tier, lane.sessions, self.asked), ('datacenter', 2, ['datacenter']))
+        self.assertTrue(lane.is_direct)                   # still lane 0: never hands work back
+
+    async def test_last_rotation_goes_to_the_residential_proxy(self):
+        lane = self.escalating_lane({'/trends/api/explore': [429, 429, 429, 429, 'explore_bitcoin_12m.txt']})
+        got = await google.fetch_explore(lane, ['bitcoin'], parse_input({'searchTerms': ['bitcoin']}), lambda: True)
+        self.assertIsNone(got.throttled)
+        self.assertEqual((lane.tier, lane.sessions), ('residential', 3))
+        self.assertEqual(self.asked, ['datacenter', 'residential'])
+
+    async def test_no_residential_keeps_the_datacenter_proxy(self):
+        lane = self.escalating_lane({'/trends/api/explore': 429}, tiers=('datacenter',))
+        got = await google.fetch_explore(lane, ['bitcoin'], parse_input({'searchTerms': ['bitcoin']}), lambda: True)
+        self.assertIn('429', got.throttled)
+        self.assertEqual((lane.tier, lane.sessions), ('datacenter', 1 + google.MAX_ROTATIONS))
+
+    async def test_no_proxy_at_all_falls_back_to_a_new_cookie_jar(self):
+        lane = self.escalating_lane({'/trends/api/explore': [429, 429, 'explore_bitcoin_12m.txt']}, tiers=())
+        got = await google.fetch_explore(lane, ['bitcoin'], parse_input({'searchTerms': ['bitcoin']}), lambda: True)
+        self.assertIsNone(got.throttled)
+        self.assertEqual((lane.tier, lane.sessions, lane.proxy_cfg), ('direct', 2, None))
+
+    async def test_run_escalates_through_the_sdk_proxy(self):
+        sorry = httpx.Response(302, headers={'location': 'https://www.google.com/sorry/index?continue=x'})
+        self.sdk.proxy = FakeProxy()
+        run = await self.run_actor({'searchTerms': ['bitcoin']},
+                                   {'/trends/api/explore': [sorry, sorry, 'explore_bitcoin_12m.txt']})
+        self.assertEqual(len(self.actor.rows), 1)
+        self.assertEqual(run.lanes[0].tier, 'datacenter')
+        self.assertTrue(self.sdk.proxy.sessions)
+
     async def test_proxy_password_is_scrubbed(self):
         lane = google.Lane(1, None, 't', 'US', google.Counters())
         lane._secret = 's3cret'  # noqa: S105  a made-up proxy password

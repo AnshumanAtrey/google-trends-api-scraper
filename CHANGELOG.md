@@ -17,7 +17,7 @@ First release of the scraper (replaces the private 0.1 probe that measured Googl
   listed in `missing`.
 - Google's session rules: a cookie warmup per session, every request of a keyword in one session
   (one IP), 1.5 s between requests, a 5 s wait and one retry after a 429, then up to two fresh
-  sessions. With more than 8 keywords, up to 5 extra sessions run in parallel on Apify's
+  sessions, each on a new IP (datacenter proxy first, residential proxy last). With more than 8 keywords, up to 5 extra sessions run in parallel on Apify's
   datacenter proxy. A proxy session that Google or the proxy refuses on every try stops taking
   keywords and hands its keyword back, and near the spending limit a session steps aside while
   other sessions hold the rest of the budget instead of ending the run.
