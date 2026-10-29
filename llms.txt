@@ -57,7 +57,7 @@ PAY_PER_EVENT model (PROPOSED, owner to confirm):
 - Related queries: $0.08 per keyword whose related queries came back, so $0.10 for a keyword with all three parts.
 - Trending search: $0.0009 per Trending Now row ($0.90 per 1,000), news articles included.
 - Suggestions lookup: $0.002 per keyword looked up.
-- No start fee, no monthly fee. Platform usage is included.
+- No start fee, no monthly fee. Platform usage is included. Every price is 10% less on Apify's Scale plan and 20% less on Business and above.
 
 Typical costs:
 

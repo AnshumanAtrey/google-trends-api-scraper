@@ -1,0 +1,52 @@
+{
+  "$comment": "Example tasks published on the Store by scripts/publish-tasks.mjs after every deploy (CI only). Each one is a search people type, with its own Google-indexed landing page and .md (manager/rules/SEO.md).",
+  "options": {
+    "build": "latest",
+    "memoryMbytes": 256,
+    "timeoutSecs": 3600
+  },
+  "tasks": [
+    {
+      "name": "google-trends-interest-over-time",
+      "title": "Google Trends interest over time for your keywords",
+      "description": "Get each keyword's Google search interest over the last 12 months on Google's 0 to 100 scale, with its top regions and related queries, one timeline point per week. Replace bitcoin and chatgpt with your keywords, or type your own date range.",
+      "input": {
+        "mode": "keywords",
+        "searchTerms": ["bitcoin", "chatgpt"],
+        "timeRange": "today 12-m"
+      },
+      "seoTitle": "Google Trends API - Interest Over Time by Keyword",
+      "seoDescription": "Google search interest over time for each keyword, 0 to 100, with top regions and related queries. 12 months by default, any date range. pytrends alternative.",
+      "inputSchemaFields": ["searchTerms", "timeRange", "geo"],
+      "datasetView": "timeline"
+    },
+    {
+      "name": "google-trends-trending-now",
+      "title": "Google Trends Trending Now: today's top searches in a country",
+      "description": "Every search trending on Google in the United States over the last 24 hours, the Trending Now list, with search volume, when it started, related queries and news links. Pick another country or a 4-hour to 7-day window.",
+      "input": {
+        "mode": "trending",
+        "geo": "US",
+        "trendingHours": "24"
+      },
+      "seoTitle": "Google Trends Trending Now - Top Searches Today",
+      "seoDescription": "Every search trending on Google in a country in the last 24 hours, with volume, start time, related queries and news links. Any country, 4 hours to 7 days.",
+      "inputSchemaFields": ["geo", "trendingHours", "trendingCategory"],
+      "datasetView": "trending"
+    },
+    {
+      "name": "google-trends-compare-keywords",
+      "title": "Compare keywords on Google Trends on one shared scale",
+      "description": "Compare 2 to 5 keywords side by side on one shared 0 to 100 scale, as on trends.google.com, to see which one people search for more and how that changed over the last 12 months. Swap in your own brands or products.",
+      "input": {
+        "mode": "compare",
+        "searchTerms": ["iphone", "samsung galaxy", "google pixel"],
+        "timeRange": "today 12-m"
+      },
+      "seoTitle": "Compare Keywords on Google Trends - Side by Side",
+      "seoDescription": "Compare 2 to 5 keywords on one shared Google Trends scale over time, like trends.google.com side by side. See which brand or product people search more.",
+      "inputSchemaFields": ["searchTerms", "timeRange", "geo"],
+      "datasetView": "timeline"
+    }
+  ]
+}

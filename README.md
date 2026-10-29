@@ -52,7 +52,7 @@ Related topics are not included. The endpoints this actor uses sent an empty rel
 
 ## How much does it cost to scrape Google Trends?
 
-Pay per event: **$0.02 per keyword** for interest over time and interest by region, **$0.08 more per keyword for related queries** (so **$0.10** for a keyword with all three parts), **$0.0009 per Trending Now search** ($0.90 per 1,000) and **$0.002 per keyword looked up for suggestions**. No start fee, no monthly fee, platform usage included.
+Pay per event: **$0.02 per keyword** for interest over time and interest by region, **$0.08 more per keyword for related queries** (so **$0.10** for a keyword with all three parts), **$0.0009 per Trending Now search** ($0.90 per 1,000) and **$0.002 per keyword looked up for suggestions**. No start fee, no monthly fee, platform usage included. On paid Apify plans every price is 10% less on Scale and 20% less on Business and above.
 
 | Run | Charged | Price |
 |---|---|---|
@@ -108,7 +108,7 @@ Trending Now on its own, every US trend of the past 24 hours (220 on 2026-09-24)
 | vnx0 | $0.0012 | None | RSS list only, up to 10 a day for $0.012 | Yes |
 | khadinakbar | $0.005 + platform usage | $0.00005 | Its README does not say how many trends a run returns | Yes |
 
-Several of these actors discount their prices on paid Apify plans. On paid tiers apify's fee per result falls to between $0.001 and $0.0001, but its platform usage (about $0.108 per keyword in our one-keyword run) stays on your bill. This actor has one price on every plan. For a bare list of trend names without news, data_xplorer's Google Trends Scraper costs less than this actor.
+Several of these actors discount their prices on paid Apify plans. On paid tiers apify's fee per result falls to between $0.001 and $0.0001, but its platform usage (about $0.108 per keyword in our one-keyword run) stays on your bill. This actor is 10% less on Scale and 20% less on Business and above, with platform usage still included. For a bare list of trend names without news, data_xplorer's Google Trends Scraper costs less than this actor.
 
 ## Which inputs does it take?
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-30
+
+- Apify SDK 4 (`apify>=4.1,<5`): SDK 3.4.1 raised on runs started by Apify's AI assistant (run origin
+  APIFY_AI) wherever a status message was read back. 92 tests pass; the example (bitcoin, chatgpt) gave 2 keyword rows with keyword and related-queries charges locally.
+- Store discounts: 10% off on Scale, 20% off on Business and above; Free and Starter prices unchanged.
+- Three example tasks on the Store (`.actor/tasks.json`, published by CI).
+
 ## [1.0] - 2026-09-24
 
 First release of the scraper (replaces the private 0.1 probe that measured Google Trends from Apify).
