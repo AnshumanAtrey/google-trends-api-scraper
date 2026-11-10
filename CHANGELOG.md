@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-11 (example pages)
+
+- Two example pages stay on the Store: Trending Now and the keyword comparison. Interest over time, which the main page
+  already covers, stays saved but unpublished (`"publish": false` in `.actor/tasks.json`): the account can publish 100
+  example pages across all its actors.
+
 ## 2026-10-30
 
 - Apify SDK 4 (`apify>=4.1,<5`): SDK 3.4.1 raised on runs started by Apify's AI assistant (run origin

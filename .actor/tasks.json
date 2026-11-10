@@ -1,5 +1,5 @@
 {
-  "$comment": "Example tasks published on the Store by scripts/publish-tasks.mjs after every deploy (CI only). Each one is a search people type, with its own Google-indexed landing page and .md (manager/rules/SEO.md).",
+  "$comment": "Example tasks published on the Store by scripts/publish-tasks.mjs after every deploy (CI only). Each one is a search people type, with its own Google-indexed landing page and .md (manager/rules/SEO.md). Tasks marked publish false stay saved but off the Store: the account publishes at most 100 pages across all actors, so each actor keeps 2 or more by its earnings and search traffic (2026-11-11).",
   "options": {
     "build": "latest",
     "memoryMbytes": 256,
@@ -8,6 +8,7 @@
   "tasks": [
     {
       "name": "google-trends-interest-over-time",
+      "publish": false,
       "title": "Google Trends interest over time for your keywords",
       "description": "Get each keyword's Google search interest over the last 12 months on Google's 0 to 100 scale, with its top regions and related queries, one timeline point per week. Replace bitcoin and chatgpt with your keywords, or type your own date range.",
       "input": {
