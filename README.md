@@ -6,6 +6,13 @@ Use it as a pytrends alternative or a SerpApi Google Trends alternative: pull Go
 
 ---
 
+**Use it from an AI assistant:**
+
+- **Claude** (claude.ai and the desktop app): [Add Google Trends to Claude](https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=Google%20Trends&connectorUrl=https%3A%2F%2Fmcp.apify.com%3Ftools%3Danshumanatrey%2Fgoogle-trends-api-scraper), click Continue, sign in to Apify, Allow, and ask in plain words.
+- **Claude Code:** `claude mcp add --transport http google-trends-api-scraper "https://mcp.apify.com?tools=anshumanatrey/google-trends-api-scraper"`, then run `/mcp` to sign in to Apify.
+- **Codex:** `codex mcp add google-trends-api-scraper --url "https://mcp.apify.com?tools=anshumanatrey/google-trends-api-scraper"`, then `codex mcp login google-trends-api-scraper`.
+- **Any other MCP client:** `https://mcp.apify.com?tools=anshumanatrey/google-trends-api-scraper`, signed in with Apify or an `Authorization: Bearer <APIFY_TOKEN>` header.
+
 ## What does it do?
 
 You type one or more keywords and press Start. Each keyword comes back as one dataset row with the same keys every time, so it drops straight into a spreadsheet, a database or an AI pipeline.
