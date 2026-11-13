@@ -73,6 +73,7 @@ Pay per event: **$0.02 per keyword** for interest over time and interest by regi
 | Trending Now, India, past 7 days (1,182 trends on 2026-09-24) | 1,182 trends | $1.06 |
 | Suggestions for 10 keywords | 10 lookups | $0.02 |
 | A run where Google returned no data | 0 | $0.00 |
+| No keyword given: the example, bitcoin and chatgpt | 2 | $0.00 |
 
 A keyword costs the same whichever of interest over time and regions you ask for, and in a comparison each keyword counts once. Related queries are charged only when Google returns at least one. Apify's free plan includes $5 of monthly credit, which covers about 250 keywords with interest over time and regions, 50 keywords with related queries as well, or 5,500 Trending Now searches. Set a spending limit on a run for a hard cap: the actor does not start a keyword the remaining limit cannot pay for, stops cleanly when the limit is reached, and every row you paid for is saved.
 

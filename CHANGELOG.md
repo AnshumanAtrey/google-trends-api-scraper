@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-14
+
+- A run given no keyword (a blank line, which Apify's input check lets through, or an API call without
+  `searchTerms`) no longer fails with "No keywords to look up". It looks up the form's example keywords, bitcoin and
+  chatgpt, free of charge, and says so in the status message and `OUTPUT.notes`, so the run shows what it returns.
+  Keywords that were typed but cannot be used still fail the run with the reason.
+
 ## 2026-11-11 (example pages)
 
 - Two example pages stay on the Store: Trending Now and the keyword comparison. Interest over time, which the main page

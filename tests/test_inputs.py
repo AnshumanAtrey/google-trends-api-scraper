@@ -35,10 +35,20 @@ class Defaults(unittest.TestCase):
 
 
 class Keywords(unittest.TestCase):
-    def test_no_keywords_fails_plainly(self):
-        for raw in ({}, {'searchTerms': []}, {'searchTerms': ['  ', '']}, {'mode': 'suggestions'}):
-            with self.assertRaisesRegex(InputError, 'No keywords to look up'):
-                parse(raw)
+    def test_no_keyword_looks_up_the_example(self):
+        # A blank line passes Apify's input check, and an API call may leave searchTerms out: both failed the run until
+        # 2026-11-14. Now the run looks up the form's example, free, and says so.
+        for raw in ({}, {'searchTerms': []}, {'searchTerms': ['  ', '']}, {'mode': 'suggestions'},
+                    {'mode': 'compare', 'searchTerms': ['']}):
+            cfg = parse(raw)
+            self.assertEqual((cfg.keywords, cfg.example), (['bitcoin', 'chatgpt'], True), raw)
+            self.assertIn('looked up the example keywords bitcoin and chatgpt, free of charge', cfg.notes[-1])
+        self.assertFalse(parse({'searchTerms': ['bitcoin']}).example)
+
+    def test_only_unusable_keywords_fails_plainly(self):
+        # Something was typed, so the run says why it cannot use it instead of answering with the example.
+        with self.assertRaisesRegex(InputError, 'No keywords to look up'):
+            parse({'searchTerms': ['x' * 101]})
 
     def test_blank_lines_repeats_and_spaces(self):
         cfg = parse({'searchTerms': ['  bitcoin ', 'bitcoin', '', 'taylor   swift']})

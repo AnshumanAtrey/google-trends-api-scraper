@@ -40,7 +40,7 @@ from decimal import Decimal
 from apify import Actor
 
 from . import google, parse
-from .inputs import Config, InputError, geo_name, parse_input
+from .inputs import EXAMPLE_NOTE, Config, InputError, geo_name, parse_input
 
 # Pay-per-event names; they must equal the event keys of the pricing set in Console / store.json.
 KEYWORD_EVENT = 'keyword'
@@ -114,6 +114,7 @@ class Delivery:
         self.charged = Counter(dict.fromkeys(EVENTS, 0))
         self.rows = 0
         self.limit = False
+        self.free = False              # the example run: rows delivered without their events
 
     def reserve(self, events: list[str]) -> Decimal | None:
         """Hold the worst-case cost of one unit against the spending limit; None when it does not fit.
@@ -121,7 +122,7 @@ class Delivery:
         another lane may come back (a keyword without related queries costs less than its worst case)."""
         if self.limit:
             return None
-        if not self.ppe or self.max_usd is None or not Decimal(self.max_usd).is_finite():
+        if self.free or not self.ppe or self.max_usd is None or not Decimal(self.max_usd).is_finite():
             return Decimal(0)
         need = sum((Decimal(self.prices.get(e, 0)) for e in events), Decimal(0))
         left = Decimal(self.max_usd) - self.cm.calculate_total_charged_amount() - self.reserved
@@ -144,6 +145,10 @@ class Delivery:
 
     async def push(self, rows: list[dict], event: str) -> int:
         """Push rows charged as event. Returns how many were delivered: the SDK drops rows it cannot charge."""
+        if self.free:
+            await self.actor.push_data(rows)
+            self.rows += len(rows)
+            return len(rows)
         result = await self.actor.push_data(rows, charged_event_name=event)
         done = self._count(event, result, len(rows))
         self.rows += done
@@ -159,7 +164,7 @@ class Delivery:
             self.rows += 1
         else:
             return False
-        if has_related:
+        if has_related and not self.free:
             self._count(RELATED_EVENT, await self.actor.charge(event_name=RELATED_EVENT, count=1), 1)
         return True
 
@@ -169,6 +174,7 @@ class Run:
     def __init__(self, cfg: Config, delivery: Delivery, transport=None):
         self.cfg = cfg
         self.delivery = delivery
+        delivery.free = cfg.example
         self.transport = transport           # test seam: httpx mock transport
         self.t0 = time.monotonic()
         self.tag = secrets.token_hex(3)
@@ -506,6 +512,8 @@ class Run:
                     parts.append(f'{len(stopped)} keyword{"s were" if len(stopped) > 1 else " was"} not saved.')
         if self.stop and final:
             parts.append(f'The run stopped early because {STOP_REASONS[self.stop]}')
+        if final and cfg.example:
+            parts.insert(0, EXAMPLE_NOTE)
         parts.append(took)
         return ' '.join(parts)
 

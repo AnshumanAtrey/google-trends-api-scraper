@@ -39,6 +39,9 @@ TRENDS_URL = re.compile(r'^https?://(www\.)?trends\.google\.[a-z.]+/', re.I)
 KEYWORD_SPLIT = re.compile(r'[,;]')
 COMPARE_MIN, COMPARE_MAX = 2, 5             # Google's own limit per comparison
 MAX_KEYWORD_CHARS = 100                     # our guard: a longer "keyword" is almost always pasted text
+EXAMPLE_KEYWORDS = ('bitcoin', 'chatgpt')   # the form's prefill, looked up free when no keyword is given
+EXAMPLE_NOTE = ('No keyword was given, so this run looked up the example keywords bitcoin and chatgpt, free of '
+                'charge. Enter your own in Keywords (searchTerms), one per line.')
 MAX_NEWS = 10
 FIRST_DAY = date(2004, 1, 1)                # Google Trends data starts here
 COUNTRIES: dict[str, str] = json.loads((Path(__file__).parent / 'countries.json').read_text(encoding='utf-8'))
@@ -65,6 +68,7 @@ class Config:
     news_per_trend: int = 3
     max_items: int = 0
     notes: list[str] = field(default_factory=list)          # plain-English changes we made to the input
+    example: bool = False                                    # no keyword given: the example, delivered free
 
     def wants(self, part: str) -> bool:
         return part in self.data_types
@@ -264,6 +268,11 @@ def parse_input(raw: dict | None, today: date | None = None) -> Config:
         cfg.notes.append('The Trending Now list does not use keywords, so they were left out.')
 
     if mode != 'trending':
+        if not cfg.keywords and not cfg.invalid:
+            # Nothing typed (blank lines, or an API call without searchTerms): look up the example instead of
+            # failing, free, so the run shows what it returns (owner, 2026-11-14).
+            cfg.keywords, cfg.example = list(EXAMPLE_KEYWORDS), True
+            cfg.notes.append(EXAMPLE_NOTE)
         if not cfg.keywords:
             why = f' {cfg.invalid[0][1]}' if cfg.invalid else ''
             raise InputError(f'No keywords to look up.{why} Enter at least one keyword in Keywords (searchTerms), '

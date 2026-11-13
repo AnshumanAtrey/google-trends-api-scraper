@@ -342,6 +342,15 @@ class KeywordCharging(Base):
         self.assertEqual(run.counters.requests, 1 + 2 * 4)       # warmup, then explore + 3 widgets per keyword
         self.assertEqual([e['status'] for e in run.entries], ['ok', 'ok'])
 
+    async def test_example_run_is_free(self):
+        # No keyword given: the example keywords are delivered with no event charged, even under a tiny limit.
+        run = await self.run_actor({'searchTerms': ['']}, max_usd='0.0001')
+        self.assertEqual([r['keyword'] for r in self.actor.rows], ['bitcoin', 'chatgpt'])
+        self.assertEqual(self.actor.charges, [])
+        self.assertEqual(run.delivery.rows, 2)
+        self.assertTrue(run.message(True).startswith('No keyword was given, so this run looked up the example '
+                                                     'keywords bitcoin and chatgpt, free of charge.'))
+
     async def test_empty_related_queries_are_not_charged(self):
         run = await self.run_actor({'searchTerms': ['bitcoin']},
                                    {'/trends/api/widgetdata/relatedsearches': 'related_empty.txt'})
